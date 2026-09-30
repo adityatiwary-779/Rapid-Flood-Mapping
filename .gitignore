@@ -10,3 +10,6 @@ results/
 *-key.json
 *credentials*.json
 .vercel
+key.json
+key.b64
+*.b64
