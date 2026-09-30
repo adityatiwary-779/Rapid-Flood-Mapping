@@ -6,7 +6,7 @@ CAVEAT = ("The Random Forest is trained on labels produced by the threshold step
           "independent validation. Compare these results with a Copernicus EMS map or "
           "news-reported flooded areas before relying on them.")
 
-PREVIEW_NAMES = ("pre_vv", "post_vv", "flood", "flood_unmasked", "severity")
+PREVIEW_NAMES = ("pre_vv", "post_vv", "flood", "flood_rule", "flood_unmasked", "severity")
 OPTIONAL_FILES = ("flood.tif", "dvv_db.tif", "stats.csv", "flood_vec.geojson", "flooded_roads.geojson",
                   "affected_settlements.geojson", "affected_settlements.csv",
                   "roads_flooded_by_type.csv", "config.json")

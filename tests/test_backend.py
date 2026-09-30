@@ -144,7 +144,7 @@ def test_job_end_to_end_and_downloads(make_client):
     assert m["roads"]["road_km_flooded"] > 0 and m["roads"]["settlements"] and m["roads"]["by_type"]
     assert m["roads"]["motorable_only"] is True and m["roads"]["settlement_buffer_m"] == 250
     assert m["windows"] == {"pre": ["2018-07-01", "2018-07-30"], "post": ["2018-08-15", "2018-08-25"]}
-    assert set(m["previews"]) == {"pre_vv", "post_vv", "flood", "flood_unmasked", "severity"}
+    assert set(m["previews"]) == {"pre_vv", "post_vv", "flood", "flood_rule", "flood_unmasked", "severity"}
 
     def get(url):
         resp = c.get(url)

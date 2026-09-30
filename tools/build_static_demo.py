@@ -29,7 +29,7 @@ sys.path.insert(0, os.path.join(ROOT, "pipeline"))
 # population figures, threshold/method; the radar images stay but are synthetic and labelled as such.
 DROP_FILES = ("flood.tif", "dvv_db.tif", "flooded_roads.geojson", "affected_settlements.geojson",
               "affected_settlements.csv", "roads_flooded_by_type.csv")
-DROP_PREVIEWS = ("severity", "flood_unmasked")
+DROP_PREVIEWS = ("severity", "flood_unmasked", "flood_rule")
 
 
 def blank_column(csv_bytes, column):

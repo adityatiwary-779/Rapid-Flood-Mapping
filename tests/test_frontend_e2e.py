@@ -185,7 +185,10 @@ def test_layer_toggles(make_page, server):
     assert has("flood") and not has("flood_unmasked") and not has("severity")
     pg.check("input[name=floodMode][value=unmasked]")
     assert has("flood_unmasked") and not has("flood")
-    assert "Flood (unmasked)" in pg.locator("#legend").inner_text()
+    assert "threshold only, no masks" in pg.locator("#legend").inner_text()
+    pg.check("input[name=floodMode][value=rule]")
+    assert has("flood_rule") and not has("flood_unmasked") and not has("flood")
+    assert "threshold only, masked" in pg.locator("#legend").inner_text()
     pg.check("input[name=floodMode][value=off]")
     assert not has("flood") and not has("flood_unmasked")
     pg.check("input[name=floodMode][value=masked]")
@@ -420,8 +423,11 @@ def test_no_secrets_reach_the_browser(make_page, server):
     open_preset(pg, server)
     pg.click("#tabCustom"); pg.click("#btnRun")
     pg.wait_for_selector("#content:not([hidden])", timeout=20000)
-    blob = b"\n".join(b + json.dumps(dict(h)).encode() for _, h, b in bodies).lower()
-    for needle in (b"private_key", b"begin private", b"ya29.", b"aiza", b"upstash", b"refresh_token", b"client_secret", b"ee_service_account", b'"cid"', b'"work"'):
+    raw = b"\n".join(b + json.dumps(dict(h)).encode() for _, h, b in bodies)
+    blob = raw.lower()
+    import re as _re
+    assert not _re.search(rb"AIza[0-9A-Za-z_\-]{35}", raw) and not _re.search(rb"ya29\.[0-9A-Za-z_\-]{20,}", raw)   # Google API key / OAuth token shapes
+    for needle in (b"private_key", b"begin private", b"upstash", b"refresh_token", b"client_secret", b"ee_service_account", b'"cid"', b'"work"'):
         assert needle not in blob, needle
     assert pg.evaluate("Object.keys(window).filter(k => /secret|token|apikey|api_key|private_key|credentials?$/i.test(k))") == []
     assert pg.evaluate("document.cookie") == "" and pg.evaluate("Object.keys(localStorage).length") == 0

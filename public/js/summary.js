@@ -79,7 +79,8 @@
     if (c.used_rf) method += ' A Random Forest then refined the result.';
     if (c.used_rf && s.rule_based_km2 !== undefined && s.rule_based_km2 !== null)
       method += ' The threshold-only map covers ' + km2(s.rule_based_km2) + ' km² and the refined map ' + km2(flood) + ' km², so the true extent is uncertain.';
-    if (s.flood_unmasked_km2) method += ' Without the terrain and permanent-water masks the map would show ' + km2(s.flood_unmasked_km2) + ' km².';
+    if (s.flood_unmasked_km2 && s.rule_based_km2 !== undefined && s.rule_based_km2 !== null && s.flood_unmasked_km2 >= s.rule_based_km2)
+      method += ' The terrain and permanent-water masks removed ' + km2(s.flood_unmasked_km2 - s.rule_based_km2) + ' km² (' + pct(s.flood_unmasked_km2 - s.rule_based_km2, s.flood_unmasked_km2) + ') from the threshold result (' + km2(s.flood_unmasked_km2) + ' to ' + km2(s.rule_based_km2) + ' km²).';
     out.push(method);
 
     (m.warnings || []).forEach(function (w) { out.push('Note: ' + w.message); });

@@ -105,8 +105,8 @@ def test_demo_never_ships_invented_data(demo_url):
         assert st["cropland_km2"] == pytest.approx(101.8527, abs=1e-3) and st["population_exposed"] == pytest.approx(73575.02, abs=0.1)
         assert st["threshold_db"] == pytest.approx(-3.9002, abs=1e-3)
     else:                                                            # after make_real_previews.py
-        assert set(m["previews"]) == {"pre_vv", "post_vv", "flood", "flood_unmasked", "severity"}
-        assert 50 < st["flood_km2"] < 400 and st["flood_unmasked_km2"] >= st["flood_km2"]
+        assert set(m["previews"]) >= {"pre_vv", "post_vv", "flood", "flood_unmasked", "severity"}     # flood_rule optional (older exports)
+        assert 50 < st["flood_km2"] < 400 and st["flood_unmasked_km2"] >= st["rule_based_km2"]   # masks can only REMOVE area from the threshold result
         assert not any("synthetic" in w["message"].lower() for w in m["warnings"])
     row = next(csv.DictReader(io.StringIO(_get(demo_url + m["files"]["stats.csv"])[1].decode())))
     assert float(row["flood_km2"]) == pytest.approx(st["flood_km2"], abs=1e-6)
@@ -117,7 +117,7 @@ def test_demo_never_ships_invented_data(demo_url):
 
 def test_real_imagery_mode_content(real_demo_url):
     m = _manifest(real_demo_url)
-    assert m["mock"] is False and set(m["previews"]) == {"pre_vv", "post_vv", "flood", "flood_unmasked", "severity"}
+    assert m["mock"] is False and set(m["previews"]) == {"pre_vv", "post_vv", "flood", "flood_rule", "flood_unmasked", "severity"}
     assert m["stats"]["flood_unmasked_km2"] == 198.0 and m["stats"]["other_km2"] == pytest.approx(150 - 100 - m["stats"]["builtup_km2"] - m["stats"]["tree_cover_km2"])
     assert m["roads"] is None and m["warnings"][0]["level"] == "info" and "synthetic" not in m["warnings"][0]["message"].lower()
     assert json.loads(_get(real_demo_url + "/api/config")[1])["mode"] == "static"
@@ -159,6 +159,7 @@ def _browse(pw, url, tmp_path):
         assert not banner_visible and "Demo data" not in chips and chip == "Static demo"
         assert "rendered by Earth Engine" in pg.locator("#warnings").inner_text()
         assert pg.locator("input[name=floodMode][value=unmasked]").is_enabled() and pg.locator("#lyrSeverity").is_enabled()
+        assert pg.locator("input[name=floodMode][value=rule]").is_enabled() == ("flood_rule" in m["previews"])
         pg.check("input[name=floodMode][value=unmasked]")
         assert pg.evaluate("floodApp.state.map.hasLayer(floodApp.state.layers.flood_unmasked)")
         pg.check("#lyrSeverity")
@@ -187,7 +188,7 @@ def _browse(pw, url, tmp_path):
     pg.click("#btnSummary")
     txt = pg.locator("#summaryText").inner_text()
     assert f"about {round(st['flood_km2'])} km²" in txt and "NOT independent validation" in txt
-    assert ("Without the terrain and permanent-water masks" in txt) == real
+    assert ("permanent-water masks removed" in txt) == real and "would show" not in txt
     assert "roads" not in txt.lower().replace("no road", "")
     assert errors == [], errors
     assert all(u.split("?")[0].split("/api/")[1] in ("config", "regions", "events", f"events/{PID}") for u in api_calls), api_calls

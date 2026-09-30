@@ -423,7 +423,7 @@ def start_exports(run, dest, vectors=True, asset_root=None, log=print):
 
 
 # ---- map images for the website (rendered by Earth Engine from the SAME images as the exports)
-PREVIEW_LAYERS = ("pre_vv", "post_vv", "flood", "flood_unmasked", "severity")
+PREVIEW_LAYERS = ("pre_vv", "post_vv", "flood", "flood_rule", "flood_unmasked", "severity")
 
 
 def preview_images(run):
@@ -433,6 +433,8 @@ def preview_images(run):
         "pre_vv": run.pre.select("VV").visualize(**grey),
         "post_vv": run.post.select("VV").visualize(**grey),
         "flood": run.final.selfMask().visualize(min=0, max=1, palette=["#22d3ee"], opacity=0.85),
+        # threshold result WITH the terrain / permanent-water masks, before Random Forest: compare with flood_unmasked
+        "flood_rule": run.rule_flood.selfMask().visualize(min=0, max=1, palette=["#a78bfa"], opacity=0.85),
         "flood_unmasked": run.unmasked.selfMask().visualize(min=0, max=1, palette=["#f5a524"],
                                                              opacity=0.85),
         # severity = size of the backscatter drop (dB), shown only where the drop exceeds 1.5 dB

@@ -125,13 +125,15 @@ def _previews():
     post = np.where(mask, np.clip(45 + 25 * tex, 0, 255), pre)
     flood = np.zeros((H, W, 4), "u1")
     flood[mask] = (34, 211, 238, 217)
+    rule = np.zeros((H, W, 4), "u1")
+    rule[mask & (tex > -0.15)] = (167, 139, 250, 217)
     wide = mask | (np.sin(lons * 90) * np.cos(lats * 80) > .82)
     unm = np.zeros((H, W, 4), "u1")
     unm[wide] = (245, 165, 36, 217)
     sev = np.zeros((H, W, 4), "u1")
     t = np.clip((tex + .6) / 1.4, 0, 1)[mask][:, None]
     sev[mask] = np.hstack([253 - 72 * t, 230 - 190 * t, 138 - 100 * t, np.full(t.shape, 235)]).astype("u1")
-    return {"pre_vv": png_bytes(grey(pre)), "post_vv": png_bytes(grey(post)), "flood": png_bytes(flood),
+    return {"pre_vv": png_bytes(grey(pre)), "post_vv": png_bytes(grey(post)), "flood": png_bytes(flood), "flood_rule": png_bytes(rule),
             "flood_unmasked": png_bytes(unm), "severity": png_bytes(sev)}
 
 

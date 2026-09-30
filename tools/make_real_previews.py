@@ -5,7 +5,7 @@ pipeline, and refresh the demo's statistics from the same run. Run once, on your
   earthengine authenticate                      # if you have not already
   python tools/make_real_previews.py --project graceful-karma-457005-v6
 
-It rebuilds the Alappuzha 2018 graph (1-3 minutes), downloads 5 PNGs (pre/post radar, flood, unmasked flood, severity)
+It rebuilds the Alappuzha 2018 graph (1-3 minutes), downloads 6 PNGs (pre/post radar, final flood, threshold-masked, threshold-unmasked, severity)
 and updates public/demo + public/files. The demo then no longer claims "synthetic radar". Roads and GeoTIFFs stay out
 of the static demo (they need the worker). Afterwards:  python -m pytest -q tests/test_static_demo.py
 """
@@ -21,7 +21,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "pipeline"))
 
-PREVIEWS = ("pre_vv", "post_vv", "flood", "flood_unmasked", "severity")
+PREVIEWS = ("pre_vv", "post_vv", "flood", "flood_rule", "flood_unmasked", "severity")
 NOTE = ("Static demo: the radar images, flood layers and figures were rendered by Earth Engine from the pipeline "
         "for this event. Road analysis, settlements and GeoTIFF downloads are not included in the static demo.")
 

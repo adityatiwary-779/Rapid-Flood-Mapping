@@ -90,7 +90,7 @@ def test_driver_maps_tasks_previews_and_polls():
                       "job1", "results/job1")
     assert set(out["task_ids"]) == {"flood", "dvv_db", "stats", "flood_vec"}
     assert out["task_ids"]["flood_vec"] == "T-job1_alappuzha_flood_vec" and out["task_ids"]["flood"] == "T-job1_alappuzha_flood"
-    assert set(out["previews"]) == set(fp.PREVIEW_LAYERS) and get.call_count == 5
+    assert set(out["previews"]) == set(fp.PREVIEW_LAYERS) and get.call_count == len(fp.PREVIEW_LAYERS)
     assert out["bounds"] == [[9.1, 76.2], [9.8, 76.6]] and out["config"]["masks"]["max_hand_m"] == 15.0
 
     import ee as real_ee

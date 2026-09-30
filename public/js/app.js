@@ -301,7 +301,10 @@
         el('span', { class: 'val', text: fmt(p[1]) + ' km²' }), el('span', { class: 'pc', text: S.fmt.pct(p[1], s.flood_km2) })]));
     });
     var note = 'Land cover from ESA WorldCover. “Other” can include water that was already there.';
-    if (s.flood_unmasked_km2) note += ' Without the terrain and permanent-water masks the map would show ' + fmt(s.flood_unmasked_km2) + ' km².';
+    if (s.flood_unmasked_km2 != null && s.rule_based_km2 != null && s.flood_unmasked_km2 >= s.rule_based_km2) {
+      var cut = s.flood_unmasked_km2 - s.rule_based_km2;
+      note += ' The terrain and permanent-water masks removed ' + fmt(cut) + ' km² (' + S.fmt.pct(cut, s.flood_unmasked_km2) + ') from the threshold result (' + fmt(s.flood_unmasked_km2) + ' → ' + fmt(s.rule_based_km2) + ' km²).';
+    }
     if (m.config && m.config.used_rf && s.rule_based_km2 != null) note += ' Threshold-only estimate: ' + fmt(s.rule_based_km2) + ' km²; with Random Forest: ' + fmt(s.flood_km2) + ' km².';
     $('compNote').textContent = note;
   }
@@ -408,7 +411,8 @@
     }
     img('pre_vv', 'swipeL', 1).addTo(map); img('post_vv', 'swipeR', 1).addTo(map);
     if (P.flood_unmasked) img('flood_unmasked', 'swipeR', 2);
-    img('flood', 'swipeR', 3);
+    if (P.flood_rule) img('flood_rule', 'swipeR', 3);
+    img('flood', 'swipeR', 4);
     if (P.severity) img('severity', 'swipeR', 5).setOpacity(0.9);   // severity on top so ticking it is visible
     availability(m);
     map.fitBounds(b, { padding: [20, 20] });
@@ -424,11 +428,12 @@
   function availability(m) {
     var P = m.previews || {}, F = m.files || {};
     var un = document.querySelector('input[name=floodMode][value=unmasked]');
-    [[un, !!P.flood_unmasked, 'Unmasked layer not included for this event'], [$('lyrSeverity'), !!P.severity, 'Severity layer not included for this event'],
+    var rl = document.querySelector('input[name=floodMode][value=rule]');
+    [[un, !!P.flood_unmasked, 'Unmasked layer not included for this event'], [rl, !!P.flood_rule, 'Not included for this event'], [$('lyrSeverity'), !!P.severity, 'Severity layer not included for this event'],
      [$('lyrRoads'), !!F['flooded_roads.geojson'], 'No road data for this event'], [$('lyrSettle'), !!F['affected_settlements.geojson'], 'No settlement data for this event']
     ].forEach(function (x) {
       x[0].disabled = !x[1]; x[0].parentNode.title = x[1] ? '' : x[2]; x[0].parentNode.classList.toggle('off', !x[1]);
-      if (!x[1] && x[0].checked) { x[0].checked = false; if (x[0] === un) document.querySelector('input[name=floodMode][value=masked]').checked = true; }
+      if (!x[1] && x[0].checked) { x[0].checked = false; if (x[0].name === 'floodMode') document.querySelector('input[name=floodMode][value=masked]').checked = true; }
     });
   }
 
@@ -445,7 +450,7 @@
     if (!state.map || !state.manifest) return;
     var L_ = state.layers, map = state.map, mode = document.querySelector('input[name=floodMode]:checked').value;
     function toggle(layer, on) { if (!layer) return; if (on && !map.hasLayer(layer)) layer.addTo(map); if (!on && map.hasLayer(layer)) map.removeLayer(layer); }
-    toggle(L_.flood, mode === 'masked'); toggle(L_.flood_unmasked, mode === 'unmasked'); toggle(L_.severity, $('lyrSeverity').checked);
+    toggle(L_.flood, mode === 'masked'); toggle(L_.flood_rule, mode === 'rule'); toggle(L_.flood_unmasked, mode === 'unmasked'); toggle(L_.severity, $('lyrSeverity').checked);
     var op = $('radarOpacity').value / 100; ['pre_vv', 'post_vv'].forEach(function (k) { if (L_[k]) L_[k].setOpacity(op); });
     var wantRoads = $('lyrRoads').checked, wantSettle = $('lyrSettle').checked;
     var mid = state.manifest.id;
@@ -459,8 +464,9 @@
   }
   function renderLegend(mode) {
     var lg = clear($('legend'));
-    if (mode === 'masked') lg.appendChild(el('div', {}, [el('i', { style: 'background:var(--flood)' }), 'Flood (masked)']));
-    if (mode === 'unmasked') lg.appendChild(el('div', {}, [el('i', { style: 'background:var(--unmasked)' }), 'Flood (unmasked)']));
+    if (mode === 'masked') lg.appendChild(el('div', {}, [el('i', { style: 'background:var(--flood)' }), 'Flood: final result']));
+    if (mode === 'rule') lg.appendChild(el('div', {}, [el('i', { style: 'background:var(--rule)' }), 'Flood: threshold only, masked']));
+    if (mode === 'unmasked') lg.appendChild(el('div', {}, [el('i', { style: 'background:var(--unmasked)' }), 'Flood: threshold only, no masks']));
     if ($('lyrSeverity').checked) lg.appendChild(el('div', {}, ['Backscatter drop', el('span', { class: 'grad' }), '1.5 dB → 10 dB']));
     if ($('lyrRoads').checked) lg.appendChild(el('div', {}, [el('i', { style: 'background:#ff7a59' }), 'Flooded roads']));
     if ($('lyrSettle').checked) lg.appendChild(el('div', {}, [el('i', { style: 'background:#c084fc' }), 'Affected settlements']));

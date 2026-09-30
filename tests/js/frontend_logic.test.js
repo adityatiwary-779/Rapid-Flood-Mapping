@@ -34,7 +34,8 @@ test('summary uses real numbers with sensible rounding', () => {
   assert.match(t, /4 of 212 mapped settlements lie within 250 m/);
   assert.match(t, /-3\.90 dB/);
   assert.match(t, /threshold-only map covers 83\.2 km² and the refined map 151 km², so the true extent is uncertain/);
-  assert.match(t, /Without the terrain and permanent-water masks the map would show 198 km²/);
+  assert.match(t, /masks removed 115 km² \(58%\) from the threshold result \(198 to 83\.2 km²\)/);
+  assert.doesNotMatch(t, /would show/);
   assert.match(t, /Note: Only 2 post-flood images\./);
   assert.match(t, /NOT independent validation/);          // caveat always included
   assert.match(t, /Copernicus EMS/);

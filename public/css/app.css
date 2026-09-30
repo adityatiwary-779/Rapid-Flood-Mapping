@@ -6,7 +6,7 @@
   /* categorical slots 1-3 from the validated palette + a neutral for "other" */
   --c-crop: #3987e5; --c-built: #d95926; --c-tree: #199e70; --c-other: #6b6a65;
   --warn: #fab219; --danger: #d03b3b; --ok: #0ca30c;
-  --flood: #22d3ee; --unmasked: #f5a524;
+  --flood: #22d3ee; --unmasked: #f5a524; --rule: #a78bfa;
   --radius: 10px; --gap: 16px;
 }
 * { box-sizing: border-box; }
