@@ -60,6 +60,7 @@
       state.config = cfg;
       $('modeChip').hidden = false; $('modeChip').textContent = cfg.mode === 'mock' ? 'Demo mode' : 'Live';
       if (cfg.mode === 'mock') { $('modeChip').className = 'chip demo'; $('mockBanner').hidden = false; }
+      if (cfg.static_demo) { $('tabCustom').disabled = true; $('tabCustom').title = 'Not available in the static demo'; $('staticNote').hidden = false; }
       fillLimits(); validateCustom();
       return Promise.all([api('/api/events'), api('/api/regions')]);
     }).then(function (r) {
@@ -406,7 +407,10 @@
       state.layers[name] = o; return o;
     }
     img('pre_vv', 'swipeL', 1).addTo(map); img('post_vv', 'swipeR', 1).addTo(map);
-    img('flood_unmasked', 'swipeR', 2); img('flood', 'swipeR', 3); img('severity', 'swipeR', 5).setOpacity(0.9);   // severity on top so ticking it is visible
+    if (P.flood_unmasked) img('flood_unmasked', 'swipeR', 2);
+    img('flood', 'swipeR', 3);
+    if (P.severity) img('severity', 'swipeR', 5).setOpacity(0.9);   // severity on top so ticking it is visible
+    availability(m);
     map.fitBounds(b, { padding: [20, 20] });
     $('lblBefore').textContent = 'Before · ' + S.fmt.shortRange(m.windows.pre);
     $('lblAfter').textContent = 'After · ' + S.fmt.shortRange(m.windows.post);
@@ -414,6 +418,18 @@
       (m.mock ? ' In demo mode the radar images are synthetic.' : '');
     setRatio(0.5); applyLayers();
     setTimeout(function () { map.invalidateSize(); map.fitBounds(b, { padding: [20, 20] }); updateClip(); }, 50);
+  }
+
+  // controls for data this event does not have are disabled (never silently do nothing)
+  function availability(m) {
+    var P = m.previews || {}, F = m.files || {};
+    var un = document.querySelector('input[name=floodMode][value=unmasked]');
+    [[un, !!P.flood_unmasked, 'Unmasked layer not included for this event'], [$('lyrSeverity'), !!P.severity, 'Severity layer not included for this event'],
+     [$('lyrRoads'), !!F['flooded_roads.geojson'], 'No road data for this event'], [$('lyrSettle'), !!F['affected_settlements.geojson'], 'No settlement data for this event']
+    ].forEach(function (x) {
+      x[0].disabled = !x[1]; x[0].parentNode.title = x[1] ? '' : x[2]; x[0].parentNode.classList.toggle('off', !x[1]);
+      if (!x[1] && x[0].checked) { x[0].checked = false; if (x[0] === un) document.querySelector('input[name=floodMode][value=masked]').checked = true; }
+    });
   }
 
   var vec = { roads: null, settle: null };

@@ -53,6 +53,7 @@ legend { padding: 0 6px; font-size: 13px; color: var(--text-2); } legend small {
 
 .tabs { display: flex; gap: 6px; margin-bottom: 4px; }
 .tab { flex: 1; min-height: 40px; background: var(--surface-2); color: var(--text-2); border: 1px solid var(--border); border-radius: 8px; font: inherit; cursor: pointer; }
+.tab[disabled] { opacity: .45; cursor: not-allowed; }
 .tab[aria-selected=true] { background: var(--accent-strong); border-color: var(--accent-strong); color: #fff; }
 
 .btn { min-height: 42px; padding: 8px 14px; background: var(--surface-3); color: var(--text); border: 1px solid var(--border); border-radius: 8px; font: inherit; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; }
@@ -87,6 +88,7 @@ legend { padding: 0 6px; font-size: 13px; color: var(--text-2); } legend small {
 .tool.slider { font-size: 12px; color: var(--text-3); text-transform: uppercase; letter-spacing: .04em; margin: 0; min-width: 150px; }
 .tool.slider input { margin-top: 4px; }
 .opt { display: inline-flex; align-items: center; margin: 4px 14px 0 0; font-size: 14px; color: var(--text); min-height: 32px; cursor: pointer; }
+.opt.off { opacity: .45; cursor: not-allowed; }
 .opt small { color: var(--text-3); margin-left: 4px; }
 
 .mapbox { position: relative; height: clamp(360px, 58vh, 640px); background: #0d1b26; touch-action: pan-y; }

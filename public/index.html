@@ -17,8 +17,8 @@
   </header>
 
   <div id="mockBanner" class="banner demo" role="status" hidden>
-    <strong>Demo data.</strong> This server runs in mock mode: the flood shapes and numbers come from one real
-    run (Alappuzha 2018) and the radar images are synthetic. Do not use them for anything real.
+    <strong>Demo data.</strong> The flood shapes and area figures come from one real pipeline run (Alappuzha, Kerala 2018).
+    The radar images, and any road, settlement or extra layers shown in demo mode, are synthetic. Do not use this for anything real.
   </div>
   <div class="banner caveat" role="note" id="caveatTop">
     <strong>Read this first:</strong>
@@ -35,6 +35,8 @@
           <button role="tab" id="tabPreset" aria-controls="panePreset" aria-selected="true" class="tab">Preset events</button>
           <button role="tab" id="tabCustom" aria-controls="paneCustom" aria-selected="false" class="tab" tabindex="-1">Custom dates</button>
         </div>
+
+        <p id="staticNote" class="hint" hidden>Custom dates need the live Earth Engine backend, which is not switched on in this demo. The preset event is precomputed.</p>
 
         <div id="panePreset" role="tabpanel" aria-labelledby="tabPreset">
           <label for="presetEvent">Flood event</label>

@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    { "source": "/api/config", "destination": "/demo/api/config.json" },
+    { "source": "/api/regions", "destination": "/demo/api/regions.json" },
+    { "source": "/api/events", "destination": "/demo/api/events.json" },
+    { "source": "/api/events/:id", "destination": "/demo/api/events/:id.json" }
+  ]
+}

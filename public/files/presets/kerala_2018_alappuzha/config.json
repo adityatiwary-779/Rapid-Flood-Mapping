@@ -1,0 +1,23 @@
+{
+  "method": "MOCK: fixture from the real Alappuzha 2018 run",
+  "threshold_db": -3.900212381361193,
+  "otsu_raw_db": -3.900212381361193,
+  "otsu_ok": true,
+  "diff_clamp_db": [
+    -6.0,
+    -2.5
+  ],
+  "post_vv_db": -15.0,
+  "used_rf": true,
+  "orbit_pass": "DESCENDING",
+  "speckle": "median composite + 50 m circular focal median",
+  "masks": {
+    "max_slope_deg": 5.0,
+    "max_hand_m": 15.0,
+    "max_jrc_occurrence_pct": 80,
+    "min_patch_pixels": 10
+  },
+  "export_scale_m": 30,
+  "n_pre_images": 6,
+  "n_post_images": 2
+}
