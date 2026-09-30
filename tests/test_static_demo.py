@@ -60,6 +60,32 @@ def real_demo_url(tmp_path_factory):
 
 
 @pytest.fixture(scope="module")
+def roads_demo_url(tmp_path_factory):
+    """A copy of public/ after tools/add_roads_to_demo.py ran on a synthetic roads_exposure.py output folder."""
+    import sys
+    sys.path.insert(0, ROOT)
+    from tools import add_roads_to_demo as ard
+    tmp = tmp_path_factory.mktemp("roadspub")
+    root, res = tmp / "public", tmp / "results"
+    shutil.copytree(PUBLIC, root)
+    res.mkdir()
+    (res / "exposure_summary.csv").write_text("place,road_km_total,road_km_flooded,settlements_total,settlements_affected\nAlappuzha,7569.7,117.8,165,22\n")
+    (res / "roads_flooded_by_type.csv").write_text("highway,flooded_km\nresidential,60.5\ntertiary,30.3\nprimary,27.0\n")
+    (res / "affected_settlements.csv").write_text("place,name\nvillage,Test Village\nhamlet,\n")
+    line = lambda pts, **pr: {"type": "Feature", "properties": {"element": "way", "id": 1, **pr}, "geometry": {"type": "LineString", "coordinates": pts}}  # noqa: E731
+    (res / "flooded_roads.geojson").write_text(json.dumps({"type": "FeatureCollection", "features": [
+        line([[76.3401234567, 9.4912345678], [76.3501234567, 9.4912345678]], highway="primary", name="NH 66", flooded_km=1.234567, osmid=5),
+        line([[76.3401234567, 9.4512345678], [76.3501234567, 9.4512345678]], highway="residential", flooded_km=0.5)]}))
+    pt = lambda x, y, **pr: {"type": "Feature", "properties": pr, "geometry": {"type": "Point", "coordinates": [x, y]}}  # noqa: E731
+    (res / "affected_settlements.geojson").write_text(json.dumps({"type": "FeatureCollection", "features": [
+        pt(76.3451234567, 9.4912345678, place="village", name="Test Village"), pt(76.3551234567, 9.4912345678, place="hamlet")]}))
+    ard.apply_roads(str(root), PID, str(res))
+    srv, url = _serve(str(root))
+    yield url
+    srv.shutdown()
+
+
+@pytest.fixture(scope="module")
 def pw():
     with sync_playwright() as p:
         b = p.chromium.launch(**({"executable_path": CHROME} if CHROME else {}), args=["--no-sandbox"])
@@ -91,11 +117,20 @@ def test_rewrites_serve_api_paths(demo_url):
 
 def test_demo_never_ships_invented_data(demo_url):
     m = _manifest(demo_url)
-    assert m["roads"] is None                                        # roads need the live worker
-    assert "flood.tif" not in m["files"] and "dvv_db.tif" not in m["files"]
-    for name in ("flooded_roads.geojson", "affected_settlements.geojson", "flood.tif", "dvv_db.tif"):
+    assert "flood.tif" not in m["files"] and "dvv_db.tif" not in m["files"]      # GeoTIFFs are not in the static demo
+    for name in ("flood.tif", "dvv_db.tif"):
         with pytest.raises(urllib.error.HTTPError):
             _get(demo_url + f"/files/presets/{PID}/{name}")
+    if m["roads"] is None:                                           # no roads yet: nothing road-related may ship
+        for name in ("flooded_roads.geojson", "affected_settlements.geojson"):
+            with pytest.raises(urllib.error.HTTPError):
+                _get(demo_url + f"/files/presets/{PID}/{name}")
+    else:                                                            # roads present: must be real OSM output, never the mock stack's
+        r = m["roads"]
+        assert r["source"] in ("OpenStreetMap", "local file") and "error" not in r
+        assert not any("Sample village" in (x["name"] or "") for x in r["settlements"]) and r["road_km_total"] != 1520.3
+        assert 0 <= r["road_km_flooded"] <= r["road_km_total"] and r["settlements_affected"] <= r["settlements_total"]
+        assert r["settlements_affected"] == len(r["settlements"]) and abs(sum(b["flooded_km"] for b in r["by_type"]) - r["road_km_flooded"]) < 1.0
     assert "NOT independent validation" in m["caveat"]
     st = m["stats"]
     if m["mock"]:                                                    # default build: synthetic radar, mock-only layers stripped
@@ -119,7 +154,7 @@ def test_real_imagery_mode_content(real_demo_url):
     m = _manifest(real_demo_url)
     assert m["mock"] is False and set(m["previews"]) == {"pre_vv", "post_vv", "flood", "flood_rule", "flood_unmasked", "severity"}
     assert m["stats"]["flood_unmasked_km2"] == 198.0 and m["stats"]["other_km2"] == pytest.approx(150 - 100 - m["stats"]["builtup_km2"] - m["stats"]["tree_cover_km2"])
-    assert m["roads"] is None and m["warnings"][0]["level"] == "info" and "synthetic" not in m["warnings"][0]["message"].lower()
+    assert m["warnings"][0]["level"] == "info" and "synthetic" not in m["warnings"][0]["message"].lower()
     assert json.loads(_get(real_demo_url + "/api/config")[1])["mode"] == "static"
     assert json.loads(_get(real_demo_url + "/api/events")[1])["events"][0]["mock"] is False
     row = next(csv.DictReader(io.StringIO(_get(real_demo_url + m["files"]["stats.csv"])[1].decode())))
@@ -148,8 +183,14 @@ def _browse(pw, url, tmp_path):
     pg.wait_for_function("document.getElementById('mapLoading').hidden", timeout=15000)
     kp = lambda label: pg.locator(".kpi").filter(has=pg.locator(".k", has_text=re.compile(f"^{label}$"))).inner_text()  # noqa: E731
     st = m["stats"]
-    assert f"{round(st['flood_km2'])}" in kp("Flooded area") and "n/a" in kp("Flooded roads")
-    assert "not available" in pg.locator("#roadBox").inner_text()
+    assert f"{round(st['flood_km2'])}" in kp("Flooded area")
+    has_roads = m["roads"] is not None
+    if has_roads:
+        shown = lambda v: str(round(v)) if v >= 100 else (f"{v:.1f}" if v >= 1 else f"{v:.2f}")  # noqa: E731  (same rule as the UI: 118, 51.4, 0.03)
+        assert shown(m["roads"]["road_km_flooded"]) in kp("Flooded roads") and str(m["roads"]["settlements_affected"]) in kp("Affected settlements")
+        assert pg.locator("#roadBox li").count() == min(200, len(m["roads"]["settlements"]))
+    else:
+        assert "n/a" in kp("Flooded roads") and "not available" in pg.locator("#roadBox").inner_text()
     assert "not independent validation" in pg.locator("#caveatTop").inner_text()
     assert "NOT independent validation" in pg.locator("#caveatBottom").inner_text()
     banner_visible = pg.locator("#mockBanner").is_visible()
@@ -169,7 +210,13 @@ def _browse(pw, url, tmp_path):
         assert banner_visible and "Demo data" in chips
         assert pg.locator("input[name=floodMode][value=unmasked]").is_disabled() and pg.locator("#lyrSeverity").is_disabled()
         assert "Static demo" in pg.locator("#warnings").inner_text()
-    assert pg.locator("#lyrRoads").is_disabled() and pg.locator("#lyrSettle").is_disabled()   # roads are never in the static demo
+    assert pg.locator("#lyrRoads").is_disabled() == (not has_roads) and pg.locator("#lyrSettle").is_disabled() == (not has_roads)
+    if has_roads:
+        pg.check("#lyrRoads")
+        pg.wait_for_function("(() => { let n = 0; floodApp.state.map.eachLayer(l => { if (l.feature) n++; }); return n > 0; })()", timeout=10000)
+        pg.check("#lyrSettle")
+        pg.wait_for_function("(() => { let n = 0; floodApp.state.map.eachLayer(l => { if (l.feature && l.feature.geometry.type === 'Point') n++; }); return n > 0; })()", timeout=10000)
+        assert "Flooded roads" in pg.locator("#legend").inner_text()
     box, h = pg.locator("#map").bounding_box(), pg.locator("#swipe").bounding_box()
     pg.mouse.move(h["x"] + h["width"] / 2, h["y"] + 100)
     pg.mouse.down()
@@ -180,16 +227,24 @@ def _browse(pw, url, tmp_path):
         pg.locator("#downloads a", has_text="Stats CSV").click()
     d.value.save_as(tmp_path / "s.csv")
     assert "flood_km2" in (tmp_path / "s.csv").read_text()
+    if has_roads:
+        with pg.expect_download() as d:
+            pg.locator("#downloads a", has_text="Flooded roads").click()
+        d.value.save_as(tmp_path / "r.geojson")
+        assert json.loads((tmp_path / "r.geojson").read_text())["features"]
     with pg.expect_download() as d:
         pg.locator("#downloads a", has_text="Flood polygons").click()
     d.value.save_as(tmp_path / "f.geojson")
     assert json.loads((tmp_path / "f.geojson").read_text())["type"] == "FeatureCollection"
-    assert pg.locator("#downloads a").count() == 3 and pg.locator("#downloads span[aria-disabled]").count() == 5
+    wanted = ["stats.csv", "flood.tif", "dvv_db.tif", "flood_vec.geojson", "flooded_roads.geojson",
+              "affected_settlements.geojson", "roads_flooded_by_type.csv", "config.json"]
+    have = sum(n in m["files"] for n in wanted)
+    assert pg.locator("#downloads a").count() == have and pg.locator("#downloads span[aria-disabled]").count() == len(wanted) - have
     pg.click("#btnSummary")
     txt = pg.locator("#summaryText").inner_text()
     assert f"about {round(st['flood_km2'])} km²" in txt and "NOT independent validation" in txt
     assert ("permanent-water masks removed" in txt) == real and "would show" not in txt
-    assert "roads" not in txt.lower().replace("no road", "")
+    assert ("km of roads" in txt) == has_roads                        # roads paragraph only when real roads exist
     assert errors == [], errors
     assert all(u.split("?")[0].split("/api/")[1] in ("config", "regions", "events", f"events/{PID}") for u in api_calls), api_calls
     ctx.close()
@@ -220,3 +275,32 @@ def test_make_real_previews_refuses_placeholder_project():
     import sys
     r = subprocess.run([sys.executable, "tools/make_real_previews.py", "--project", "YOUR_PROJECT"], cwd=ROOT, capture_output=True, text=True, timeout=60)
     assert r.returncode != 0 and "placeholder" in (r.stdout + r.stderr) and "Traceback" not in r.stderr
+
+
+def test_add_roads_tool_output(roads_demo_url):
+    m = _manifest(roads_demo_url)
+    r = m["roads"]
+    assert (r["road_km_total"], r["road_km_flooded"], r["settlements_total"], r["settlements_affected"]) == (7569.7, 117.8, 165, 22)
+    assert r["source"] == "OpenStreetMap" and r["motorable_only"] is True and r["settlement_buffer_m"] == 250
+    assert r["by_type"][0] == {"highway": "residential", "flooded_km": 60.5}
+    assert r["settlements"] == [{"name": "Test Village", "place": "village"}, {"name": None, "place": "hamlet"}]
+    for n in ("flooded_roads.geojson", "affected_settlements.geojson", "roads_flooded_by_type.csv", "affected_settlements.csv"):
+        assert m["files"][n].endswith(n) and _get(roads_demo_url + m["files"][n])[0] == 200
+    gj = json.loads(_get(roads_demo_url + m["files"]["flooded_roads.geojson"])[1])
+    f0 = gj["features"][0]
+    assert f0["properties"] == {"highway": "primary", "name": "NH 66", "flooded_km": 1.235}          # slimmed properties
+    assert f0["geometry"]["coordinates"][0] == [76.34012, 9.49123]                                      # ~1 m precision
+    info = [w for w in m["warnings"] if w["code"] == "static_demo"]
+    assert len(info) == 1 and "OpenStreetMap" in info[0]["message"] and "within 250 m" in info[0]["message"]
+    assert "not included here" not in info[0]["message"]
+
+
+def test_static_demo_with_roads_in_browser(pw, roads_demo_url, tmp_path):
+    _browse(pw, roads_demo_url, tmp_path)
+
+
+def test_add_roads_tool_complains_about_missing_files(tmp_path):
+    import subprocess
+    import sys
+    r = subprocess.run([sys.executable, "tools/add_roads_to_demo.py", "--results", str(tmp_path)], cwd=ROOT, capture_output=True, text=True, timeout=60)
+    assert r.returncode != 0 and "roads_exposure.py first" in (r.stdout + r.stderr) and "Traceback" not in r.stderr
