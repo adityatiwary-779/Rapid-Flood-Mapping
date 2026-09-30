@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Rapid Flood Mapping</title>
+  <meta name="description" content="Sentinel-1 radar flood mapping: before/after comparison, affected area, roads and population exposure.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231a1a19'/%3E%3Cpath d='M4 19c4-5 7 5 12 0s8 5 12 0v9H4z' fill='%233987e5'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="vendor/leaflet/leaflet.css">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <a class="skip" href="#results">Skip to results</a>
+  <header class="top">
+    <h1>Rapid Flood Mapping <span class="sub">Sentinel-1 radar</span></h1>
+    <span id="modeChip" class="chip" hidden></span>
+  </header>
+
+  <div id="mockBanner" class="banner demo" role="status" hidden>
+    <strong>Demo data.</strong> This server runs in mock mode: the flood shapes and numbers come from one real
+    run (Alappuzha 2018) and the radar images are synthetic. Do not use them for anything real.
+  </div>
+  <div class="banner caveat" role="note" id="caveatTop">
+    <strong>Read this first:</strong>
+    <span class="long">The Random Forest is trained on labels from the threshold step, so it is <u>not independent validation</u>. Compare results with a Copernicus EMS map or news-reported flooded areas.</span><span class="short">Random Forest = <u>not independent validation</u>. Compare with a Copernicus EMS map or news reports.</span>
+  </div>
+
+  <div id="toast" class="toast" role="alert" hidden></div>
+
+  <main class="layout">
+    <aside class="side">
+      <section class="panel" aria-labelledby="ctlTitle">
+        <h2 id="ctlTitle">Choose an event</h2>
+        <div class="tabs" role="tablist" aria-label="Event source">
+          <button role="tab" id="tabPreset" aria-controls="panePreset" aria-selected="true" class="tab">Preset events</button>
+          <button role="tab" id="tabCustom" aria-controls="paneCustom" aria-selected="false" class="tab" tabindex="-1">Custom dates</button>
+        </div>
+
+        <div id="panePreset" role="tabpanel" aria-labelledby="tabPreset">
+          <label for="presetEvent">Flood event</label>
+          <select id="presetEvent"></select>
+          <label for="presetDistrict">District</label>
+          <select id="presetDistrict"></select>
+          <p class="hint" id="presetWindows"></p>
+          <button id="btnLoadPreset" class="btn primary" type="button">Load event</button>
+        </div>
+
+        <form id="paneCustom" role="tabpanel" aria-labelledby="tabCustom" hidden novalidate>
+          <div class="grid2">
+            <div><label for="cState">State</label><input id="cState" list="stateList" value="Kerala" autocomplete="off"></div>
+            <div><label for="cDistrict">District</label><input id="cDistrict" list="districtList" value="Alappuzha" autocomplete="off"></div>
+          </div>
+          <datalist id="stateList"></datalist><datalist id="districtList"></datalist>
+          <fieldset>
+            <legend>Pre-flood window <small>(before the flood)</small></legend>
+            <div class="grid2">
+              <div><label for="preStart">From</label><input type="date" id="preStart" value="2018-07-01"></div>
+              <div><label for="preEnd">To</label><input type="date" id="preEnd" value="2018-07-30"></div>
+            </div>
+          </fieldset>
+          <fieldset>
+            <legend>Post-flood window <small>(flood at its peak)</small></legend>
+            <div class="grid2">
+              <div><label for="postStart">From</label><input type="date" id="postStart" value="2018-08-15"></div>
+              <div><label for="postEnd">To</label><input type="date" id="postEnd" value="2018-08-25"></div>
+            </div>
+          </fieldset>
+          <p class="hint" id="limitHint"></p>
+          <div id="cIssues" class="issues" aria-live="polite"></div>
+          <div id="sIssues" class="issues" aria-live="assertive"></div>
+          <div class="row">
+            <button id="btnCheck" class="btn" type="button">Check images</button>
+            <button id="btnRun" class="btn primary" type="submit">Run analysis</button>
+          </div>
+          <div id="preflightOut" class="preflight" aria-live="polite"></div>
+        </form>
+      </section>
+
+      <section class="panel" id="jobBox" aria-live="polite" hidden>
+        <h2>Analysis progress</h2>
+        <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="jobBar"><div id="jobFill"></div></div>
+        <p id="jobMsg" class="jobmsg"></p>
+        <p id="jobTime" class="hint"></p>
+        <div id="jobError" class="issue error" hidden></div>
+        <button id="btnRetry" class="btn" type="button" hidden>Edit and try again</button>
+      </section>
+    </aside>
+
+    <section class="main" id="results" tabindex="-1" aria-label="Results">
+      <div id="empty" class="empty">
+        <h2>No event loaded yet</h2>
+        <p>Pick a preset event on the left, or enter your own pre-flood and post-flood dates. Presets load instantly;
+        custom dates start a live Earth Engine analysis that takes a few minutes.</p>
+      </div>
+
+      <div id="content" hidden>
+        <div class="head">
+          <div>
+            <h2 id="evTitle"></h2>
+            <p id="evPlace" class="hint"></p>
+          </div>
+          <div id="evChips" class="chips"></div>
+        </div>
+        <div id="warnings"></div>
+
+        <div class="mapcard">
+          <div class="maptools" id="mapTools">
+            <fieldset class="tool">
+              <legend>Flood layer</legend>
+              <label class="opt"><input type="radio" name="floodMode" value="masked" checked> Masked <small>(recommended)</small></label>
+              <label class="opt"><input type="radio" name="floodMode" value="unmasked"> Unmasked</label>
+              <label class="opt"><input type="radio" name="floodMode" value="off"> Off</label>
+            </fieldset>
+            <fieldset class="tool">
+              <legend>Also show</legend>
+              <label class="opt"><input type="checkbox" id="lyrSeverity"> Severity</label>
+              <label class="opt"><input type="checkbox" id="lyrRoads"> Flooded roads</label>
+              <label class="opt"><input type="checkbox" id="lyrSettle"> Settlements</label>
+            </fieldset>
+            <label class="tool slider">Radar opacity
+              <input type="range" id="radarOpacity" min="0" max="100" value="100" aria-label="Radar image opacity">
+            </label>
+          </div>
+          <div class="mapbox">
+            <div id="map" role="application" aria-label="Before and after flood map"></div>
+            <div class="lbl left" id="lblBefore">Before</div>
+            <div class="lbl right" id="lblAfter">After</div>
+            <div id="swipe" class="swipe" role="slider" tabindex="0" aria-label="Before and after comparison position"
+                 aria-valuemin="0" aria-valuemax="100" aria-valuenow="50"><span class="grip" aria-hidden="true"></span></div>
+            <div class="legend" id="legend" aria-label="Map legend"></div>
+            <div id="mapLoading" class="maploading" hidden>Loading map layers…</div>
+          </div>
+          <p class="hint mapnote" id="mapNote"></p>
+        </div>
+
+        <div class="kpis" id="kpis"></div>
+
+        <div class="cols">
+          <section class="panel" aria-labelledby="compTitle">
+            <h3 id="compTitle">What was flooded</h3>
+            <div class="stack" id="stack" role="img" aria-label="Flooded area by land cover"></div>
+            <ul class="legendlist" id="compList"></ul>
+            <p class="hint" id="compNote"></p>
+          </section>
+          <section class="panel" aria-labelledby="roadTitle">
+            <h3 id="roadTitle">Roads and settlements</h3>
+            <div id="roadBox"></div>
+          </section>
+        </div>
+
+        <div class="cols">
+          <section class="panel" aria-labelledby="methTitle">
+            <h3 id="methTitle">Method used</h3>
+            <dl class="dl" id="method"></dl>
+            <h4>Masks applied</h4>
+            <dl class="dl" id="masks"></dl>
+          </section>
+          <section class="panel" aria-labelledby="dlTitle">
+            <h3 id="dlTitle">Downloads and summary</h3>
+            <div class="downloads" id="downloads"></div>
+            <button id="btnSummary" class="btn primary" type="button">Generate summary</button>
+            <div id="summaryBox" class="summary" hidden>
+              <div id="summaryText"></div>
+              <div class="row">
+                <button id="btnCopy" class="btn" type="button">Copy text</button>
+                <button id="btnSaveTxt" class="btn" type="button">Download .txt</button>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <div class="banner caveat inline" role="note" id="caveatBottom"></div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">Sentinel-1 (Copernicus), JRC, SRTM, MERIT Hydro, ESA WorldCover, WorldPop via Google Earth Engine; roads and places © OpenStreetMap contributors.</footer>
+
+  <script src="vendor/leaflet/leaflet.js"></script>
+  <script src="js/validate.js"></script>
+  <script src="js/summary.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

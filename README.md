@@ -1,4 +1,43 @@
-# Sentinel-1 Rapid Flood Mapping – how to run
+# Rapid Flood Mapping (Sentinel-1) – web app + pipeline
+
+> **Known limitation (shown in the app on every results page):** the Random Forest is trained on labels
+> produced by the threshold step, so it is **not independent validation**. Compare results with a
+> Copernicus EMS map or news-reported flooded areas before relying on them.
+
+## Layout
+```
+pipeline/  the Earth Engine pipeline (CLI) + roads_exposure.py            [runs on the worker / your machine]
+common/    validation, rate limits, storage, queue, jobs, manifest, mock-mode fakes
+api/       FastAPI app for Vercel (thin: validate, enqueue, report status)
+worker/    Cloud Run worker: runs the pipeline in short steps, roads, map images
+public/    the website (plain HTML/JS + Leaflet)
+tests/     pytest (backend, browser) + node tests (frontend logic)
+data/      presets.json, regions.json, mock fixtures
+```
+
+## Run everything locally (no Google account needed – "mock mode")
+```
+pip install -r requirements-dev.txt
+playwright install chromium            # only for the browser tests
+set BACKEND_MODE=mock                  # Windows cmd   (PowerShell: $env:BACKEND_MODE="mock"; Mac/Linux: export BACKEND_MODE=mock)
+uvicorn api.index:app --port 8000      # then open http://localhost:8000
+```
+Mock mode serves the real Alappuzha 2018 flood polygons and numbers with **synthetic radar images**,
+clearly labelled "Demo data" in the UI.
+
+## Tests
+```
+python -m pytest -q tests              # backend + pipeline wiring + browser (Chromium via Playwright)
+node --test tests/js/frontend_logic.test.js
+```
+Set `CHROME_PATH` to use a specific Chromium. The browser tests stub map tiles, so they need no internet.
+These tests use mocked Earth Engine, storage and database: they do not prove real Earth Engine behaviour.
+
+(Full deployment guide: Stage 4. The original command-line pipeline instructions follow below.)
+
+---
+
+## Command-line pipeline (original instructions)
 
 > **Status:** code reviewed and hardened; roads script and Otsu logic tested offline. The Earth Engine
 > part has **not yet been run end to end** – start with `./smoke_test.sh YOUR_PROJECT` (one district).

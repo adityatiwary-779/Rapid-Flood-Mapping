@@ -1,0 +1,25 @@
+{
+  "today": "2026-09-30",
+  "limits": {"pre_days": [7, 30], "post_days": [7, 14], "max_gap_days": 365, "data_lag_days": 2},
+  "cases": [
+    {"name": "valid", "pre": ["2018-07-01", "2018-07-30"], "post": ["2018-08-15", "2018-08-25"], "codes": []},
+    {"name": "pre too short", "pre": ["2018-07-01", "2018-07-05"], "post": ["2018-08-15", "2018-08-25"], "codes": ["pre_length"]},
+    {"name": "pre 31 days", "pre": ["2018-07-01", "2018-07-31"], "post": ["2018-08-15", "2018-08-25"], "codes": ["pre_length"]},
+    {"name": "post too short", "pre": ["2018-07-01", "2018-07-30"], "post": ["2018-08-15", "2018-08-17"], "codes": ["post_length"]},
+    {"name": "post too long", "pre": ["2018-07-01", "2018-07-30"], "post": ["2018-08-15", "2018-09-05"], "codes": ["post_length"]},
+    {"name": "post reversed", "pre": ["2018-07-01", "2018-07-30"], "post": ["2018-08-25", "2018-08-15"], "codes": ["post_order"]},
+    {"name": "pre reversed", "pre": ["2018-07-30", "2018-07-01"], "post": ["2018-08-15", "2018-08-25"], "codes": ["pre_order"]},
+    {"name": "overlap", "pre": ["2018-07-01", "2018-07-30"], "post": ["2018-07-25", "2018-08-05"], "codes": ["windows_overlap"]},
+    {"name": "touching (same day)", "pre": ["2018-07-01", "2018-07-30"], "post": ["2018-07-30", "2018-08-10"], "codes": ["windows_overlap"]},
+    {"name": "post before pre", "pre": ["2018-08-15", "2018-08-30"], "post": ["2018-07-01", "2018-07-10"], "codes": ["windows_overlap"]},
+    {"name": "before Sentinel-1", "pre": ["2013-01-01", "2013-01-20"], "post": ["2018-08-15", "2018-08-25"], "codes": ["pre_too_early"]},
+    {"name": "gap too long", "pre": ["2015-01-01", "2015-01-10"], "post": ["2018-08-15", "2018-08-25"], "codes": ["gap_too_long"]},
+    {"name": "post in future", "pre": ["2026-08-01", "2026-08-20"], "post": ["2026-09-20", "2026-09-30"], "codes": ["post_in_future"]},
+    {"name": "post ends at data-lag limit (ok)", "pre": ["2026-08-01", "2026-08-20"], "post": ["2026-09-15", "2026-09-28"], "codes": []},
+    {"name": "impossible date", "pre": ["2018-02-30", "2018-03-10"], "post": ["2018-08-15", "2018-08-25"], "codes": ["bad_date"]},
+    {"name": "month 13", "pre": ["2018-13-01", "2018-13-10"], "post": ["2018-08-15", "2018-08-25"], "codes": ["bad_date"]},
+    {"name": "empty date", "pre": ["", "2018-07-30"], "post": ["2018-08-15", "2018-08-25"], "codes": ["bad_date"]},
+    {"name": "both windows wrong length", "pre": ["2018-07-01", "2018-07-03"], "post": ["2018-08-15", "2018-08-16"], "codes": ["pre_length", "post_length"]},
+    {"name": "leap day valid", "pre": ["2020-02-10", "2020-02-29"], "post": ["2020-03-10", "2020-03-20"], "codes": []}
+  ]
+}

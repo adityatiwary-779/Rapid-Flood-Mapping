@@ -19,17 +19,31 @@ def test_health_config_regions(make_client):
     lim = c.get("/api/config").json()["limits"]
     assert lim["post_days"] == [7, 14] and lim["pre_days"] == [7, 30] and lim["max_area_km2"] == 5000
     assert c.get("/api/regions").status_code == 200
-    assert c.get("/api/events").json() == {"events": []}
+    ev = c.get("/api/events").json()["events"]                     # mock mode seeds the demo presets
+    assert [e["id"] for e in ev] == ["kerala_2018_alappuzha", "assam_2022_nagaon", "chennai_2023_chennai"]
+    assert all(e["mock"] for e in ev) and ev[0]["windows"]["pre"] == ["2018-07-01", "2018-07-31"]
     assert c.get("/api/events/nope").status_code == 404
+    assert c.get("/api/events/..%2Fsecret").status_code in (404, 422)
+
+
+def test_preset_manifest_resolves_and_files_download(make_client):
+    c, _ = make_client()
+    c.get("/api/events")
+    m = c.get("/api/events/kerala_2018_alappuzha").json()
+    assert m["kind"] == "preset" and m["id"] == "kerala_2018_alappuzha" and m["mock"] is True
+    assert m["title"] == "Kerala floods 2018 · Alappuzha"
+    assert m["windows"]["pre"] == ["2018-07-01", "2018-07-31"]        # presets are not bound by the 7-30 day rule
+    assert m["files"]["flood.tif"].startswith("/files/presets/kerala_2018_alappuzha/")
+    assert c.get(m["files"]["stats.csv"]).status_code == 200 and c.get(m["previews"]["pre_vv"]).status_code == 200
 
 
 # ------------------------------------------------------------------ validation
 @pytest.mark.parametrize("mut,code_part", [
     (dict(pre=("2018-07-01", "2018-07-03")), "pre_length"),
     (dict(pre=("2018-07-01", "2018-09-30")), "pre_length"),
-    (dict(post=("2018-08-15", "2018-08-16")), "pos_length"),
-    (dict(post=("2018-08-15", "2018-09-15")), "pos_length"),
-    (dict(post=("2018-08-25", "2018-08-15")), "pos_order"),
+    (dict(post=("2018-08-15", "2018-08-16")), "post_length"),
+    (dict(post=("2018-08-15", "2018-09-15")), "post_length"),
+    (dict(post=("2018-08-25", "2018-08-15")), "post_order"),
     (dict(post=("2018-07-25", "2018-08-05")), "windows_overlap"),           # overlaps pre window
     (dict(pre=("2018-07-20", "2018-08-10"), post=("2018-08-05", "2018-08-15")), "windows_overlap"),
     (dict(pre=("2013-01-01", "2013-01-20")), "pre_too_early"),
@@ -60,7 +74,9 @@ def test_malformed_requests_422(make_client, payload):
     for path in ("/api/jobs", "/api/preflight"):
         r = c.post(path, json=payload)
         assert r.status_code == 422
-        assert r.json()["error"]["code"] == "invalid_request" and r.json()["error"]["message"]
+        err_ = r.json()["error"]
+        assert err_["code"] == "invalid_request" and err_["message"]
+        assert "Value error" not in err_["message"] and all(i["level"] == "error" and i["message"] for i in err_["issues"])
 
 
 def test_calendar_invalid_date(make_client):
@@ -377,3 +393,18 @@ def test_no_credentials_in_repository():
                 hits.append((f, needle))
     assert not hits, hits
     assert ".env" in open(os.path.join(ROOT, ".gitignore")).read()
+
+
+# ------------------------------------------------------------------ shared window rules (same cases run in JS)
+def test_window_rules_match_shared_cases():
+    from datetime import date
+    from common.config import load_settings
+    from common.validation import check_windows
+    spec = json.load(open(os.path.join(ROOT, "tests", "fixtures", "window_cases.json")))
+    s = load_settings()
+    assert [s.pre_min_days, s.pre_max_days] == spec["limits"]["pre_days"]
+    assert [s.post_min_days, s.post_max_days] == spec["limits"]["post_days"]
+    assert s.max_gap_days == spec["limits"]["max_gap_days"] and s.data_lag_days == spec["limits"]["data_lag_days"]
+    for c in spec["cases"]:
+        got = [i["code"] for i in check_windows(c["pre"], c["post"], s, today=date.fromisoformat(spec["today"]))]
+        assert got == c["codes"], (c["name"], got)

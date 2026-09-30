@@ -17,7 +17,20 @@ from pydantic import BaseModel, field_validator  # noqa: E402
 
 from common import jobs, manifest as mf, ratelimit, services, validation  # noqa: E402
 
-app = FastAPI(title="Flood mapping API", docs_url=None, redoc_url=None)
+from contextlib import asynccontextmanager  # noqa: E402
+
+
+@asynccontextmanager
+async def lifespan(_app):
+    """Mock mode only: build the demo presets once at start-up so the first page load is not slow."""
+    svc = services.get_services()
+    if svc.settings.mode == "mock":
+        from common import presets
+        presets.seed_mock_presets(svc)
+    yield
+
+
+app = FastAPI(title="Flood mapping API", docs_url=None, redoc_url=None, lifespan=lifespan)
 
 NAME_RE = re.compile(r"^[A-Za-z0-9 .,'()&/-]{1,80}$")
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -56,12 +69,27 @@ class AnalysisRequest(BaseModel):
         return v
 
 
+FIELD_LABELS = {"region.name": "District name", "region.parent": "State name", "region.level": "Region level",
+                "region.country": "Country", "region": "Region", "pre": "Pre-flood dates", "post": "Post-flood dates"}
+
+
+def _friendly(loc, msg):
+    field = ".".join(str(p) for p in loc[1:])
+    label = FIELD_LABELS.get(field) or FIELD_LABELS.get(field.split(".")[0]) or "The request"
+    msg = msg.removeprefix("Value error, ")
+    if msg == "Field required":
+        msg = "is required"
+    elif msg.startswith("Input should be"):
+        msg = "has an unsupported value (only districts in India can be analysed)"
+    return label + " " + msg
+
+
 @app.exception_handler(RequestValidationError)
 async def _bad_request(request, exc):
-    issues = [{"field": ".".join(str(p) for p in e["loc"][1:]), "message": e["msg"]}
-              for e in exc.errors()]
-    return err(422, "invalid_request", "The request was not valid: " +
-               "; ".join(f"{i['field']} {i['message']}" for i in issues), issues=issues)
+    issues = [{"level": "error", "code": "invalid_request", "field": ".".join(str(p) for p in e["loc"][1:]),
+               "message": _friendly(e["loc"], e["msg"])} for e in exc.errors()]
+    return err(422, "invalid_request", "The request was not valid: " + "; ".join(i["message"] for i in issues) + ".",
+               issues=issues)
 
 
 def _cid(request, svc):
@@ -107,7 +135,7 @@ def config():
     return {"mode": s.mode, "limits": {
         "pre_days": [s.pre_min_days, s.pre_max_days], "post_days": [s.post_min_days, s.post_max_days],
         "max_area_km2": s.max_area_km2, "min_images_warn": s.min_images_warn,
-        "data_lag_days": s.data_lag_days}}
+        "max_gap_days": s.max_gap_days, "data_lag_days": s.data_lag_days}, "poll_ms": 1500 if s.mode == "mock" else 6000}
 
 
 @app.get("/api/regions")
@@ -117,7 +145,11 @@ def regions():
 
 @app.get("/api/events")
 def events():
-    st = services.get_services().storage
+    svc = services.get_services()
+    st = svc.storage
+    if svc.settings.mode == "mock":              # demo only: build the preset events on first use
+        from common import presets
+        presets.seed_mock_presets(svc)
     try:
         return json.loads(st.get_bytes("presets/index.json"))
     except FileNotFoundError:

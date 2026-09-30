@@ -23,18 +23,18 @@ def check_windows(pre, post, s, today=None):
         post_s, post_e = (date.fromisoformat(x) for x in post)
     except (ValueError, TypeError):
         return [issue("error", "bad_date", "Dates must be valid, in YYYY-MM-DD format.")]
-    for label, a, b, lo, hi in (("Pre-flood", pre_s, pre_e, s.pre_min_days, s.pre_max_days),
-                                ("Post-flood", post_s, post_e, s.post_min_days, s.post_max_days)):
+    for label, key, a, b, lo, hi in (("Pre-flood", "pre", pre_s, pre_e, s.pre_min_days, s.pre_max_days),
+                                     ("Post-flood", "post", post_s, post_e, s.post_min_days, s.post_max_days)):
         if b < a:
-            issues.append(issue("error", f"{label[:3].lower()}_order",
+            issues.append(issue("error", f"{key}_order",
                                 f"{label} window ends before it starts."))
             continue
         days = (b - a).days + 1
         if not lo <= days <= hi:
-            issues.append(issue("error", f"{label[:3].lower()}_length",
+            issues.append(issue("error", f"{key}_length",
                                 f"{label} window is {days} days; it must be {lo}-{hi} days."))
         if a < S1_START:
-            issues.append(issue("error", f"{label[:3].lower()}_too_early",
+            issues.append(issue("error", f"{key}_too_early",
                                 f"{label} window starts before Sentinel-1 data exists (2014-10-03)."))
     if has_errors(issues):
         return issues

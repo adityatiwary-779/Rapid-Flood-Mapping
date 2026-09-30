@@ -93,7 +93,7 @@ def friendly_pipeline_error(e):
 def _start(job, d):
     jobs.update_job(d.store, job["id"], status="running", stage="starting", progress=5,
                     message="Selecting Sentinel-1 images and building the flood map (1-3 min)")
-    prefix = f"results/{job['id']}"
+    prefix = job.get("prefix") or f"results/{job['id']}"
     out = d.driver.start(job["spec"], job["id"], prefix)
     for name, data in out["previews"].items():
         d.storage.put_bytes(f"{prefix}/previews/{name}.png", data, "image/png")
@@ -164,8 +164,8 @@ def _finalize(job, d):
     files = {n: f"{prefix}/{n}" for n in mf.OPTIONAL_FILES if d.storage.exists(f"{prefix}/{n}")}
     previews = {n: f"{prefix}/previews/{n}.png" for n in w["previews"]}
     r = spec["region"]
-    m = mf.build(job["id"], "custom",
-                 f"{r['name']} · {spec['pre'][0]} to {spec['post'][1]}", _place(spec), spec, stats,
+    m = mf.build(job.get("preset_id") or job["id"], job.get("kind", "custom"),
+                 job.get("title") or f"{r['name']} · {spec['pre'][0]} to {spec['post'][1]}", _place(spec), spec, stats,
                  w["config"], roads, w["bounds"], previews, files, warnings, mock=w.get("mock", False))
     d.storage.put_bytes(f"{prefix}/manifest.json", json.dumps(m).encode(), "application/json")
     jobs.update_job(d.store, job["id"], status="done", stage="done", progress=100,
