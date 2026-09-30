@@ -1,1 +1,1 @@
-{"mode":"mock","limits":{"pre_days":[7,30],"post_days":[7,14],"max_area_km2":5000,"min_images_warn":2,"max_gap_days":365,"data_lag_days":2},"poll_ms":3000,"static_demo":true}
+{"mode":"static","limits":{"pre_days":[7,30],"post_days":[7,14],"max_area_km2":5000,"min_images_warn":2,"max_gap_days":365,"data_lag_days":2},"poll_ms":3000,"static_demo":true}
