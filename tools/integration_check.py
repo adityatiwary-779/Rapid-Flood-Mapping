@@ -25,7 +25,7 @@ results = []
 
 def redact(text):
     text = re.sub(r"[A-Za-z0-9_\-]{32,}", "<redacted>", str(text))
-    return re.sub(r"(private_key|token|secret)[^,}\s]*", r"\1=<redacted>", text, flags=re.I)[:300]
+    return re.sub(r"(private_key|token|secret)(\s*[:=]\s*)\S+", r"\1\2<redacted>", text, flags=re.I)[:300]
 
 
 def reachable(url):
@@ -218,6 +218,10 @@ def cmd_services(_):
 # ------------------------------------------------------------------ deployed API
 def cmd_api(a):
     base = a.url.rstrip("/")
+    if re.search(r"your[-_ ]?app|example\.com|localhost:0|<|>", base, re.I) or not base.startswith("http"):
+        print(f"'{a.url}' looks like a placeholder. Use the real URL of your deployment "
+              "(or http://localhost:8000 for a local server).")
+        return 2
     S = requests.Session()
     S.headers["x-forwarded-for"] = "203.0.113.%d" % (int(time.time()) % 200 + 1)   # distinct client for rate limits
     good = {"region": {"parent": "Kerala", "name": "Alappuzha"}, "pre": ["2018-07-01", "2018-07-30"],

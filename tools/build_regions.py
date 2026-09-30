@@ -45,6 +45,9 @@ def main(argv=None):
     ap.add_argument("--country", default="India")
     ap.add_argument("--out", default=os.path.join(ROOT, "data", "regions.json"))
     a = ap.parse_args(argv)
+    if a.project and a.project.upper().startswith("YOUR"):
+        raise SystemExit(f"'{a.project}' is a placeholder. Use your real Earth Engine Cloud project ID "
+                         "(the one you used with flood_pipeline.py --project).")
     from pipeline import flood_pipeline as fp
     from common import presets
     fp.init_ee(a.project)

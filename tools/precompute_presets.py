@@ -28,6 +28,14 @@ def main(argv=None):
     a = ap.parse_args(argv)
     if a.mock:
         os.environ["BACKEND_MODE"] = "mock"
+    else:
+        need = ["EE_PROJECT", "EE_SERVICE_ACCOUNT_JSON", "GCS_BUCKET", "UPSTASH_REDIS_REST_URL",
+                "UPSTASH_REDIS_REST_TOKEN", "WORKER_URL", "TASKS_INVOKER_SA"]
+        missing = [k for k in need if not os.environ.get(k)]
+        if missing:
+            raise SystemExit("Real mode needs the cloud services from docs/DEPLOY.md (steps 1-4). Not set: "
+                             + ", ".join(missing) + ".\nTo try this tool without any accounts: "
+                             "python tools/precompute_presets.py --mock")
 
     from common import presets, services
     from common.config import load_settings

@@ -107,3 +107,19 @@ def test_integration_check_fails_loudly_and_never_prints_secrets():
     assert secret not in r.stdout + r.stderr
     from tools import integration_check as ic
     assert "SUPERSECRET" not in ic.redact("bad key " + secret) and "<redacted>" in ic.redact("bad key " + secret)
+
+
+def test_tools_refuse_placeholders_and_explain_missing_setup():
+    def run(*args, env=None):
+        return subprocess.run([sys.executable, *args], cwd=ROOT, capture_output=True, text=True, timeout=60,
+                              env={**{k: v for k, v in os.environ.items() if not k.startswith(("EE_", "GCS_", "UPSTASH", "WORKER", "TASKS"))}, **(env or {})})
+    r = run("tools/integration_check.py", "api", "--url", "https://YOUR-APP.vercel.app")
+    assert r.returncode == 2 and "placeholder" in r.stdout and "FAIL" not in r.stdout          # no request was made
+    r = run("tools/build_regions.py", "--project", "YOUR_PROJECT")
+    assert r.returncode != 0 and "placeholder" in (r.stdout + r.stderr) and "Traceback" not in r.stderr
+    r = run("tools/precompute_presets.py")
+    assert r.returncode != 0 and "Traceback" not in r.stderr and "DEPLOY.md" in r.stderr and "--mock" in r.stderr
+    from tools import integration_check as ic
+    msg = ic.redact("missing: EE_PROJECT, UPSTASH_REDIS_REST_TOKEN, WORKER_URL")
+    assert "UPSTASH_REDIS_REST_TOKEN" in msg                                                    # env var NAMES stay readable
+    assert "abc123" not in ic.redact("bad token=abc123 and private_key: abc123")
