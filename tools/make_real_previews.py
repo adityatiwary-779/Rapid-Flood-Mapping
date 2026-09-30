@@ -22,8 +22,7 @@ sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "pipeline"))
 
 PREVIEWS = ("pre_vv", "post_vv", "flood", "flood_rule", "flood_unmasked", "severity")
-NOTE = ("Static demo: the radar images, flood layers and figures were rendered by Earth Engine from the pipeline "
-        "for this event. Road analysis, settlements and GeoTIFF downloads are not included in the static demo.")
+from tools import demo_notes  # noqa: E402
 
 
 def apply_real_assets(public, preset_id, stats, config, bounds, pngs):
@@ -51,9 +50,11 @@ def apply_real_assets(public, preset_id, stats, config, bounds, pngs):
     s = dict(stats)
     s["other_km2"] = max(0.0, s["flood_km2"] - (s.get("cropland_km2") or 0) - (s.get("builtup_km2") or 0)
                          - (s.get("tree_cover_km2") or 0))
-    m.update(mock=False, bounds=bounds, stats=s, config=config, roads=None,
+    roads = m.get("roads")                       # keep roads that add_roads_to_demo.py already put in (order must not matter)
+    note = demo_notes.note_with_roads(roads.get("settlement_buffer_m", 250)) if roads else demo_notes.NOTE_NO_ROADS
+    m.update(mock=False, bounds=bounds, stats=s, config=config, roads=roads,
              previews={n: f"/files/presets/{preset_id}/previews/{n}.png" for n in PREVIEWS},
-             warnings=[{"level": "info", "code": "static_demo", "message": NOTE}])
+             warnings=[{"level": "info", "code": "static_demo", "message": note}])
     with open(mpath, "w") as f:
         json.dump(m, f, separators=(",", ":"))
 

@@ -317,3 +317,51 @@ def test_preview_server_refuses_a_busy_port_and_never_caches():
     finally:
         srv.shutdown()
         srv.server_close()
+
+
+def test_imagery_script_rerun_keeps_roads(tmp_path):
+    """Regression: re-running make_real_previews.py after add_roads_to_demo.py used to wipe the roads from the manifest."""
+    import sys
+    sys.path.insert(0, ROOT)
+    sys.path.insert(0, os.path.join(ROOT, "pipeline"))
+    from tools import add_roads_to_demo as ard, make_real_previews as mrp
+    root, res = tmp_path / "public", tmp_path / "results"
+    shutil.copytree(PUBLIC, root)
+    res.mkdir()
+    (res / "exposure_summary.csv").write_text("place,road_km_total,road_km_flooded,settlements_total,settlements_affected\nA,100.0,10.0,5,1\n")
+    (res / "roads_flooded_by_type.csv").write_text("highway,flooded_km\nprimary,10.0\n")
+    (res / "affected_settlements.csv").write_text("place,name\nvillage,V\n")
+    (res / "flooded_roads.geojson").write_text(json.dumps({"type": "FeatureCollection", "features": [{"type": "Feature", "properties": {"highway": "primary", "flooded_km": 1}, "geometry": {"type": "LineString", "coordinates": [[76.3, 9.4], [76.31, 9.4]]}}]}))
+    (res / "affected_settlements.geojson").write_text(json.dumps({"type": "FeatureCollection", "features": [{"type": "Feature", "properties": {"place": "village", "name": "V"}, "geometry": {"type": "Point", "coordinates": [76.3, 9.4]}}]}))
+    m0 = json.load(open(root / "demo/api/events" / f"{PID}.json"))
+    if m0.get("mock"):                                               # need the real-imagery state to re-run the imagery script on
+        os.makedirs(root / "files/presets" / PID / "previews", exist_ok=True)
+        mrp.apply_real_assets(str(root), PID, dict(m0["stats"], flood_unmasked_km2=90.0), m0["config"], [[9.1, 76.2], [9.8, 76.6]], {n: PNG for n in mrp.PREVIEWS})
+    ard.apply_roads(str(root), PID, str(res))
+    mrp.apply_real_assets(str(root), PID, dict(json.load(open(root / "demo/api/events" / f"{PID}.json"))["stats"]), {"method": "again"},
+                          [[9.1, 76.2], [9.8, 76.6]], {n: PNG for n in mrp.PREVIEWS})                 # imagery script runs LAST
+    m = json.load(open(root / "demo/api/events" / f"{PID}.json"))
+    assert m["roads"] is not None and m["roads"]["road_km_flooded"] == 10.0
+    assert "OpenStreetMap" in m["warnings"][0]["message"] and m["config"]["method"] == "again"
+    assert "flooded_roads.geojson" in m["files"] and set(m["previews"]) == set(mrp.PREVIEWS)
+
+
+def test_demo_status_reports_inconsistency(tmp_path):
+    import sys
+    sys.path.insert(0, ROOT)
+    from tools import demo_status
+    root = tmp_path / "public"
+    shutil.copytree(PUBLIC, root)
+    lines, problems = demo_status.status(str(root))
+    assert any(l.startswith("roads") for l in lines) and any("imagery" in l for l in lines)
+    base = root / "files/presets" / PID
+    (base / "flooded_roads.geojson").write_text("{}")                # files on disk, manifest without roads = the bug you hit
+    m = json.load(open(root / "demo/api/events" / f"{PID}.json"))
+    m["roads"] = None
+    json.dump(m, open(root / "demo/api/events" / f"{PID}.json", "w"))
+    _, problems = demo_status.status(str(root))
+    assert any("wiped" in p and "add_roads_to_demo.py" in p for p in problems)
+    os.remove(base / "flooded_roads.geojson")
+    m["files"]["nope.csv"] = f"/files/presets/{PID}/nope.csv"
+    json.dump(m, open(root / "demo/api/events" / f"{PID}.json", "w"))
+    assert any("not on disk" in p for p in demo_status.status(str(root))[1])

@@ -13,12 +13,11 @@ import csv
 import json
 import os
 import shutil
+import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-NOTE = ("Static demo: the radar images, flood layers and figures were rendered by Earth Engine from the pipeline for "
-        "this event. Roads and settlements come from OpenStreetMap (motorable roads only; a settlement counts as "
-        "affected if its centre is within {buffer} m of flood water). GeoTIFF downloads are not included in the static demo.")
+sys.path.insert(0, ROOT)
+from tools import demo_notes  # noqa: E402
 
 
 def _round(coords, nd=5):
@@ -71,7 +70,7 @@ def apply_roads(public, preset_id, results, buffer_m=250, motorable=True, source
     for n in ("flooded_roads.geojson", "affected_settlements.geojson", "roads_flooded_by_type.csv", "affected_settlements.csv"):
         m["files"][n] = f"/files/presets/{preset_id}/{n}"
     m["warnings"] = [w for w in (m.get("warnings") or []) if w.get("code") != "static_demo"] + [
-        {"level": "info", "code": "static_demo", "message": NOTE.format(buffer=buffer_m)}]
+        {"level": "info", "code": "static_demo", "message": demo_notes.note_with_roads(buffer_m)}]
     with open(mpath, "w") as f:
         json.dump(m, f, separators=(",", ":"))
     return roads, n_roads, n_places
@@ -95,6 +94,12 @@ def main(argv=None):
     size = sum(os.path.getsize(os.path.join(a.public, "files", "presets", a.preset, n)) for n in ("flooded_roads.geojson", "affected_settlements.geojson"))
     print(f"roads: {roads['road_km_flooded']} km flooded of {roads['road_km_total']} km; settlements {roads['settlements_affected']} of {roads['settlements_total']}")
     print(f"wrote {nr} road segments and {npl} settlements ({size / 1e6:.1f} MB) into the demo")
+    mpath = os.path.join(a.public, "demo", "api", "events", f"{a.preset}.json")
+    with open(mpath) as f:                                    # prove it, do not assume it
+        ok = json.load(f).get("roads") is not None
+    print(f"checked {os.path.abspath(mpath)}: roads in manifest = {ok}")
+    if not ok:
+        raise SystemExit("ERROR: the manifest still has no roads.")
     print("Next:  git add public && git commit -m \"Real roads and settlements in the demo\" && git push   then   cd public && vercel --prod")
 
 
