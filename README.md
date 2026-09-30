@@ -33,7 +33,8 @@ node --test tests/js/frontend_logic.test.js
 Set `CHROME_PATH` to use a specific Chromium. The browser tests stub map tiles, so they need no internet.
 These tests use mocked Earth Engine, storage and database: they do not prove real Earth Engine behaviour.
 
-(Full deployment guide: Stage 4. The original command-line pipeline instructions follow below.)
+**Deploying:** see [docs/DEPLOY.md](docs/DEPLOY.md) (static demo in 2 minutes, or the full app with Google Cloud + Vercel).
+The original command-line pipeline instructions follow below.
 
 ---
 

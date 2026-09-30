@@ -113,8 +113,15 @@ def _validate(body, svc):
 
 
 def _info(body, svc):
+    """Earth Engine preflight info, cached for 6 h so 'Check images' followed by 'Run' costs one EE call."""
     r = body.region
-    return svc.info_fn(r.country, r.level, r.name, r.parent, body.pre, body.post)
+    key = "info:" + jobs.spec_key({"region": r.model_dump(), "pre": body.pre, "post": body.post})
+    hit = svc.store.get(key)
+    if hit:
+        return json.loads(hit)
+    info = svc.info_fn(r.country, r.level, r.name, r.parent, body.pre, body.post)
+    svc.store.set(key, json.dumps(info), ex=6 * 3600)
+    return info
 
 
 @app.exception_handler(ratelimit.RateLimited)

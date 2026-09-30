@@ -27,7 +27,7 @@ def run_preset(svc, preset, sleep=time.sleep, delay_scale=1.0, log=print):
     from common.services import worker_deps
     from worker import runner
     spec = preset["spec"]
-    job = {"id": preset["id"].replace("_", "")[:12].ljust(12, "0"), "key": "preset:" + preset["id"], "cid": None,
+    job = {"id": preset["id"], "key": "preset:" + preset["id"], "cid": None,
            "status": "queued", "stage": "queued", "message": "", "progress": 0, "spec": spec, "error": None,
            "created": time.time(), "updated": time.time(), "warnings": [], "result": None, "work": {},
            "kind": "preset", "preset_id": preset["id"], "prefix": f"presets/{preset['id']}",

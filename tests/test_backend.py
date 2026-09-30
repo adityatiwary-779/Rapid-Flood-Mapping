@@ -408,3 +408,16 @@ def test_window_rules_match_shared_cases():
     for c in spec["cases"]:
         got = [i["code"] for i in check_windows(c["pre"], c["post"], s, today=date.fromisoformat(spec["today"]))]
         assert got == c["codes"], (c["name"], got)
+
+
+def test_preflight_info_is_cached_between_check_and_run(make_client):
+    c, svc = make_client()
+    calls = []
+    real = svc.info_fn
+    svc.info_fn = lambda *a: (calls.append(a), real(*a))[1]
+    assert c.post("/api/preflight", json=body()).status_code == 200
+    assert c.post("/api/preflight", json=body()).status_code == 200
+    assert c.post("/api/jobs", json=body()).status_code == 202
+    assert len(calls) == 1                                  # one Earth Engine round trip for all three requests
+    assert c.post("/api/preflight", json=body(name="Other District")).status_code == 200
+    assert len(calls) == 2                                  # a different region is a different key

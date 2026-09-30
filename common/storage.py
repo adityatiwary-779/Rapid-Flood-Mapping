@@ -62,6 +62,8 @@ class GcsStorage:
 
     def url(self, path):
         if self.signed:
+            kw = {} if path.endswith(".png") else {
+                "response_disposition": f'attachment; filename="{path.rsplit("/", 1)[-1]}"'}
             return self.bucket.blob(_safe(path)).generate_signed_url(
-                version="v4", expiration=timedelta(hours=1), credentials=self.credentials)
+                version="v4", expiration=timedelta(hours=1), credentials=self.credentials, **kw)
         return f"https://storage.googleapis.com/{self.bucket_name}/{_safe(path)}"
