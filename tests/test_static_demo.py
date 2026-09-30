@@ -304,3 +304,16 @@ def test_add_roads_tool_complains_about_missing_files(tmp_path):
     import sys
     r = subprocess.run([sys.executable, "tools/add_roads_to_demo.py", "--results", str(tmp_path)], cwd=ROOT, capture_output=True, text=True, timeout=60)
     assert r.returncode != 0 and "roads_exposure.py first" in (r.stdout + r.stderr) and "Traceback" not in r.stderr
+
+
+def test_preview_server_refuses_a_busy_port_and_never_caches():
+    srv, url = _serve(PUBLIC)
+    port = int(url.rsplit(":", 1)[1])
+    try:
+        with pytest.raises(OSError):
+            serve(PUBLIC, port)                                     # a second server on the same port must fail, not share it
+        with urllib.request.urlopen(url + f"/api/events/{PID}") as r:
+            assert r.headers["Cache-Control"] == "no-store"
+    finally:
+        srv.shutdown()
+        srv.server_close()
