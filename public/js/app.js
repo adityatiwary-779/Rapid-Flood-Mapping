@@ -58,7 +58,7 @@
     // config first and on its own: a slow events/regions response must never block validation or job polling
     api('/api/config').then(function (cfg) {
       state.config = cfg;
-      $('modeChip').hidden = false; $('modeChip').textContent = cfg.mode === 'mock' ? 'Demo mode' : 'Live';
+      $('modeChip').hidden = false; $('modeChip').textContent = cfg.mode === 'mock' ? 'Demo mode' : (cfg.mode === 'static' ? 'Static demo' : 'Live');
       if (cfg.mode === 'mock') { $('modeChip').className = 'chip demo'; $('mockBanner').hidden = false; }
       if (cfg.static_demo) { $('tabCustom').disabled = true; $('tabCustom').title = 'Not available in the static demo'; $('staticNote').hidden = false; }
       fillLimits(); validateCustom();
