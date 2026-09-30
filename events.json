@@ -1,5 +1,12 @@
 {
+  "kerala_2018_alappuzha": {
+    "_note": "SMOKE TEST: one small district (~1,400 km2, Kuttanad was heavily flooded). Verify the exact GAUL spelling with: python flood_pipeline.py --list-regions --level 2 --parent Kerala",
+    "country": "India", "level": 2, "parent": "Kerala", "name": "Alappuzha",
+    "pre":  ["2018-07-01", "2018-07-31"],
+    "post": ["2018-08-15", "2018-08-25"]
+  },
   "kerala_2018": {
+    "_note": "Whole state - run only after the district smoke test works. Pre window is monsoon-wet, so 'pre' is not truly dry.",
     "country": "India", "level": 1, "name": "Kerala",
     "pre":  ["2018-07-01", "2018-07-31"],
     "post": ["2018-08-15", "2018-08-25"]
@@ -10,7 +17,7 @@
     "post": ["2022-06-18", "2022-06-28"]
   },
   "chennai_2023": {
-    "country": "India", "level": 2, "name": ["Chennai", "Tiruvallur", "Kancheepuram"],
+    "country": "India", "level": 2, "parent": "Tamil Nadu", "name": ["Chennai", "Tiruvallur", "Kancheepuram"],
     "pre":  ["2023-11-10", "2023-11-30"],
     "post": ["2023-12-05", "2023-12-12"]
   },

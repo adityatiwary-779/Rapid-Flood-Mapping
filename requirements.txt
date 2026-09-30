@@ -2,3 +2,5 @@ earthengine-api>=0.1.400
 geopandas>=0.14
 pandas
 osmnx>=1.9
+shapely>=2.0
+pytest  # only for tests/
