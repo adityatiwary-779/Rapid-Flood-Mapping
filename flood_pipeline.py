@@ -43,6 +43,14 @@ DEFAULT_CFG = {
 
 NODATA_DVV = -9999
 
+# CSV columns, in order (drops the empty ".geo" and "system:index" columns EE would add)
+STATS_COLUMNS = [
+    "event", "region", "country", "pre_start", "pre_end", "post_start", "post_end",
+    "orbit_pass", "n_pre_images", "n_post_images", "otsu_raw_db", "threshold_db",
+    "otsu_ok", "used_rf", "region_area_km2", "flood_km2", "cropland_km2", "builtup_km2",
+    "tree_cover_km2", "population_exposed", "rule_based_km2", "rule_rf_overlap_km2",
+]
+
 
 # ----------------------------------------------------------------- helpers
 def init_ee(project):
@@ -334,7 +342,7 @@ def run_region(key, ev, name, args):
             crs="EPSG:4326", maxPixels=1e13, fileFormat="GeoTIFF"),
         ee.batch.Export.table.toDrive(
             collection=stats, description=f"{tag}_stats", folder=folder,
-            fileNamePrefix=f"{tag}_stats", fileFormat="CSV"),
+            fileNamePrefix=f"{tag}_stats", fileFormat="CSV", selectors=STATS_COLUMNS),
     ]
     if args.vectors:
         vec = final.selfMask().reduceToVectors(
