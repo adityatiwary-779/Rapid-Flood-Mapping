@@ -1,0 +1,8 @@
+worker/
+tests/
+tools/
+data/fixtures/
+.local_storage/
+REVIEW.md
+requirements-dev.txt
+pipeline/requirements.txt

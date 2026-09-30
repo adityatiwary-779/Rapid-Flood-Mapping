@@ -54,6 +54,70 @@ def write_geojson(gdf, path):
         gdf.to_crs(4326).reset_index().to_file(path, driver="GeoJSON")
 
 
+def compute_exposure(flood_path, place=None, out_dir="results", motorable_only=False,
+                     settlement_buffer_m=0.0):
+    """Flooded road km + affected settlements. Writes files to out_dir, returns a summary dict."""
+    os.makedirs(out_dir, exist_ok=True)
+
+    flood = gpd.read_file(flood_path)
+    flood = flood[flood.geometry.notnull() & ~flood.geometry.is_empty]
+    if len(flood) == 0:
+        raise ValueError(f"{flood_path} contains no flood polygons - nothing to intersect.")
+    if flood.crs is None:
+        flood = flood.set_crs(4326)
+    utm = flood.estimate_utm_crs()
+    fu = union(flood.to_crs(utm))
+    # OSM query polygon used when place geocoding fails (flood bbox, padded ~1 km)
+    minx, miny, maxx, maxy = flood.to_crs(4326).total_bounds
+    query_poly = box(minx - 0.01, miny - 0.01, maxx + 0.01, maxy + 0.01)
+
+    # ---- roads
+    roads = fetch(place, query_poly, {"highway": True})
+    roads = roads[roads.geom_type.isin(["LineString", "MultiLineString"])] if len(roads) else roads
+    if len(roads):
+        roads = roads.reindex(columns=["highway", "name", "geometry"]).to_crs(utm)
+        roads["highway"] = roads["highway"].astype(str)
+        if motorable_only:
+            roads = roads[~roads["highway"].isin(NON_MOTORABLE)]
+    else:
+        roads = gpd.GeoDataFrame({"highway": [], "name": []}, geometry=[], crs=utm)
+    hit = roads.iloc[roads.sindex.query(fu, predicate="intersects")].copy()
+    hit["flooded_km"] = hit.geometry.intersection(fu).length / 1000
+    total_km = roads.length.sum() / 1000
+    by_type = (hit.groupby("highway")["flooded_km"].sum().sort_values(ascending=False)
+               .reset_index())
+    by_type.to_csv(os.path.join(out_dir, "roads_flooded_by_type.csv"), index=False)
+    write_geojson(hit, os.path.join(out_dir, "flooded_roads.geojson"))
+
+    # ---- settlements
+    places = fetch(place, query_poly,
+                   {"place": ["city", "town", "village", "hamlet", "suburb"]})
+    if len(places):
+        places = places.reindex(columns=["place", "name", "geometry"]).to_crs(utm)
+        places["geometry"] = places.geometry.centroid
+    else:
+        places = gpd.GeoDataFrame({"place": [], "name": []}, geometry=[], crs=utm)
+    target = fu.buffer(settlement_buffer_m) if settlement_buffer_m > 0 else fu
+    aff = places.iloc[places.sindex.query(target, predicate="intersects")]
+    write_geojson(aff, os.path.join(out_dir, "affected_settlements.geojson"))
+    aff.drop(columns="geometry").to_csv(
+        os.path.join(out_dir, "affected_settlements.csv"), index=False)
+
+    summary = {
+        "place": place or "flood bbox",
+        "road_km_total": round(float(total_km), 1),
+        "road_km_flooded": round(float(hit["flooded_km"].sum()), 1),
+        "settlements_total": int(len(places)),
+        "settlements_affected": int(len(aff))}
+    pd.DataFrame([summary]).to_csv(os.path.join(out_dir, "exposure_summary.csv"), index=False)
+    return {**summary,
+            "by_type": [{"highway": r.highway, "flooded_km": round(float(r.flooded_km), 2)}
+                        for r in by_type.itertuples()],
+            "settlements": [{"name": (None if pd.isna(r.name) else str(r.name)),
+                             "place": (None if pd.isna(r.place) else str(r.place))}
+                            for r in aff.itertuples()]}
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--flood", required=True, help="flood polygons GeoJSON from Earth Engine")
@@ -64,60 +128,13 @@ def main():
     ap.add_argument("--settlement-buffer-m", type=float, default=0.0,
                     help="count a settlement as affected if within this distance of flood water")
     args = ap.parse_args()
-    os.makedirs(args.out_dir, exist_ok=True)
-
-    flood = gpd.read_file(args.flood)
-    flood = flood[flood.geometry.notnull() & ~flood.geometry.is_empty]
-    if len(flood) == 0:
-        raise SystemExit(f"{args.flood} contains no flood polygons - nothing to intersect.")
-    if flood.crs is None:
-        flood = flood.set_crs(4326)
-    utm = flood.estimate_utm_crs()
-    fu = union(flood.to_crs(utm))
-    # OSM query polygon used when place geocoding fails (flood bbox, padded ~1 km)
-    minx, miny, maxx, maxy = flood.to_crs(4326).total_bounds
-    query_poly = box(minx - 0.01, miny - 0.01, maxx + 0.01, maxy + 0.01)
-
-    # ---- roads
-    roads = fetch(args.place, query_poly, {"highway": True})
-    roads = roads[roads.geom_type.isin(["LineString", "MultiLineString"])] if len(roads) else roads
-    if len(roads):
-        roads = roads.reindex(columns=["highway", "name", "geometry"]).to_crs(utm)
-        roads["highway"] = roads["highway"].astype(str)
-        if args.motorable_only:
-            roads = roads[~roads["highway"].isin(NON_MOTORABLE)]
-    else:
-        roads = gpd.GeoDataFrame({"highway": [], "name": []}, geometry=[], crs=utm)
-    hit = roads.iloc[roads.sindex.query(fu, predicate="intersects")].copy()
-    hit["flooded_km"] = hit.geometry.intersection(fu).length / 1000
-    total_km = roads.length.sum() / 1000
-    by_type = (hit.groupby("highway")["flooded_km"].sum().sort_values(ascending=False)
-               .reset_index())
-    by_type.to_csv(os.path.join(args.out_dir, "roads_flooded_by_type.csv"), index=False)
-    write_geojson(hit, os.path.join(args.out_dir, "flooded_roads.geojson"))
-
-    # ---- settlements
-    places = fetch(args.place, query_poly,
-                   {"place": ["city", "town", "village", "hamlet", "suburb"]})
-    if len(places):
-        places = places.reindex(columns=["place", "name", "geometry"]).to_crs(utm)
-        places["geometry"] = places.geometry.centroid
-    else:
-        places = gpd.GeoDataFrame({"place": [], "name": []}, geometry=[], crs=utm)
-    target = fu.buffer(args.settlement_buffer_m) if args.settlement_buffer_m > 0 else fu
-    aff = places.iloc[places.sindex.query(target, predicate="intersects")]
-    write_geojson(aff, os.path.join(args.out_dir, "affected_settlements.geojson"))
-    aff.drop(columns="geometry").to_csv(
-        os.path.join(args.out_dir, "affected_settlements.csv"), index=False)
-
-    summary = pd.DataFrame([{
-        "place": args.place or "flood bbox",
-        "road_km_total": round(total_km, 1),
-        "road_km_flooded": round(hit["flooded_km"].sum(), 1),
-        "settlements_total": len(places),
-        "settlements_affected": len(aff)}])
-    summary.to_csv(os.path.join(args.out_dir, "exposure_summary.csv"), index=False)
-    print(summary.to_string(index=False))
+    try:
+        res = compute_exposure(args.flood, args.place, args.out_dir, args.motorable_only,
+                               args.settlement_buffer_m)
+    except ValueError as e:
+        raise SystemExit(str(e))
+    print(pd.DataFrame([{k: v for k, v in res.items()
+                         if k not in ("by_type", "settlements")}]).to_string(index=False))
 
 
 if __name__ == "__main__":

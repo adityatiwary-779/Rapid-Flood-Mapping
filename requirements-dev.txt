@@ -1,0 +1,8 @@
+-r requirements.txt
+-r worker/requirements.txt
+pytest
+httpx
+uvicorn
+numpy
+shapely>=2.0
+rasterio

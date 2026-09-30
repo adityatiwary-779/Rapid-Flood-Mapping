@@ -23,6 +23,7 @@ import os
 import re
 import time
 import traceback
+from dataclasses import dataclass
 
 import ee
 
@@ -49,6 +50,7 @@ STATS_COLUMNS = [
     "orbit_pass", "n_pre_images", "n_post_images", "otsu_raw_db", "threshold_db",
     "otsu_ok", "used_rf", "region_area_km2", "flood_km2", "cropland_km2", "builtup_km2",
     "tree_cover_km2", "population_exposed", "rule_based_km2", "rule_rf_overlap_km2",
+    "flood_unmasked_km2",
 ]
 
 
@@ -226,7 +228,7 @@ def rf_refine(pre, post, diff, thr, slope, hand, occ, valid, rule_flood, region,
     return clean(feats.classify(clf).eq(1).And(valid), cfg), True
 
 
-def compute_stats(flood, rule_flood, region, cfg, meta):
+def compute_stats(flood, rule_flood, region, cfg, meta, unmasked=None):
     scale = cfg["export_scale"]
     # ESA WorldCover v200 is an ImageCollection (one global mosaic image), not an Image
     wc = ee.ImageCollection("ESA/WorldCover/v200").first().select("Map")
@@ -238,7 +240,7 @@ def compute_stats(flood, rule_flood, region, cfg, meta):
         area.updateMask(flood.And(wc.eq(10))).rename("tree_cover_km2"),
         area.updateMask(rule_flood).rename("rule_based_km2"),
         area.updateMask(rule_flood.And(flood)).rename("rule_rf_overlap_km2"),
-    ])
+    ] + ([area.updateMask(unmasked).rename("flood_unmasked_km2")] if unmasked is not None else []))
     d = stack.reduceRegion(ee.Reducer.sum(), region, scale, maxPixels=1e13, tileScale=16)
     pop = (ee.ImageCollection("WorldPop/GP/100m/pop").filter(ee.Filter.eq("year", 2020))
            .filterBounds(region).mosaic().rename("population_exposed"))
@@ -271,10 +273,31 @@ def wait_for(tasks, poll_s=20):
 
 
 # ------------------------------------------------------------------ driver
-def run_region(key, ev, name, args):
+@dataclass
+class Run:
+    """Everything built for one region: Earth Engine images (lazy) + plain metadata."""
+    key: str
+    name: str
+    tag: str
+    cfg: dict
+    region: object
+    pre: object
+    post: object
+    diff: object          # band "dVV"
+    final: object         # uint8 "flood" (RF or rule), clipped to region
+    rule_flood: object
+    unmasked: object      # rule result WITHOUT terrain/JRC masks (for the masked/unmasked toggle)
+    stats: object         # ee.FeatureCollection with one row
+    meta: dict
+    pre_rng: list
+    post_rng: list
+
+
+def prepare_run(key, ev, name, no_rf=False, log=print):
+    """Build the whole graph. Blocks on a few getInfo() calls (pass choice, Otsu, RF sample check)."""
     cfg = {**DEFAULT_CFG, **ev.get("cfg", {})}
     tag = f"{key}_{slug(name)}"
-    print(f"\n=== {tag} ===")
+    log(f"\n=== {tag} ===")
     region = get_region(ev["country"], ev.get("level", 1), name, ev.get("parent"))
     pre_rng, post_rng = ev["pre"], ev["post"]
 
@@ -286,7 +309,7 @@ def run_region(key, ev, name, args):
             raise RuntimeError(f"No {orbit} images in a window (pre/post={counts}).")
     else:
         orbit, counts = choose_pass(region, pre_rng, post_rng)
-    print(f"   pass={orbit}  images pre/post={counts}")
+    log(f"   pass={orbit}  images pre/post={counts}")
 
     pre = composite(s1_collection(region, *pre_rng, orbit), region, cfg)
     post = composite(s1_collection(region, *post_rng, orbit), region, cfg)
@@ -301,14 +324,15 @@ def run_region(key, ev, name, args):
     if cfg["otsu_candidates_only"]:
         hist_img = diff.updateMask(valid.And(vv_post.lt(cfg["post_vv_db"])))
     thr, raw, otsu_ok = diff_threshold(hist_img, region, cfg)
-    print(f"   Otsu dVV={raw:.2f} dB -> threshold used={thr:.2f} dB (otsu_ok={otsu_ok})")
+    log(f"   Otsu dVV={raw:.2f} dB -> threshold used={thr:.2f} dB (otsu_ok={otsu_ok})")
     diff = diff.rename("dVV")
 
     raw_mask = (diff.lt(thr).And(vv_post.lt(cfg["post_vv_db"]))
                 .And(vv_pre.gte(cfg["post_vv_db"])))
     rule_flood = clean(raw_mask.And(valid), cfg)
+    unmasked = clean(raw_mask, cfg).rename("flood_unmasked").unmask(0).uint8().clip(region)
 
-    if args.no_rf:
+    if no_rf:
         final, used_rf = rule_flood, False
     else:
         final, used_rf = rf_refine(pre, post, diff, thr, slope, hand, occ, valid,
@@ -321,45 +345,145 @@ def run_region(key, ev, name, args):
             "orbit_pass": orbit, "n_pre_images": counts[0], "n_post_images": counts[1],
             "otsu_raw_db": raw, "threshold_db": thr, "otsu_ok": otsu_ok,
             "used_rf": used_rf}
-    stats = compute_stats(final.selfMask(), rule_flood, region, cfg, meta)
+    stats = compute_stats(final.selfMask(), rule_flood, region, cfg, meta,
+                          unmasked=unmasked.selfMask())
+    return Run(key, name, tag, cfg, region, pre, post, diff, final, rule_flood, unmasked,
+               stats, meta, pre_rng, post_rng)
 
-    if args.print_stats:
-        print("   stats:", json.dumps(stats.first().toDictionary().getInfo(), indent=2))
-    if args.no_export:
-        return []
 
-    scale, folder = cfg["export_scale"], args.drive_folder
+def config_report(run):
+    """Plain-JSON record of the method and mask settings used (shown in the app)."""
+    c = run.cfg
+    return {
+        "method": "Sentinel-1 VV change detection (post minus pre), Otsu threshold clamped, "
+                  "optional Random Forest refinement",
+        "speckle": f"median composite + {c['smooth_radius_m']} m circular focal median",
+        "threshold_db": run.meta["threshold_db"], "otsu_raw_db": run.meta["otsu_raw_db"],
+        "otsu_ok": run.meta["otsu_ok"], "diff_clamp_db": c["diff_clamp"],
+        "post_vv_db": c["post_vv_db"], "used_rf": run.meta["used_rf"],
+        "masks": {"max_slope_deg": c["max_slope_deg"], "max_hand_m": c["max_hand_m"],
+                  "max_jrc_occurrence_pct": c["max_jrc_occurrence"],
+                  "min_patch_pixels": c["min_patch_pixels"]},
+        "export_scale_m": c["export_scale"], "orbit_pass": run.meta["orbit_pass"],
+        "n_pre_images": run.meta["n_pre_images"], "n_post_images": run.meta["n_post_images"],
+    }
+
+
+def _dest_name(dest, tag, name):
+    return f"{tag}_{name}" if "drive" in dest else f"{dest['gcs']['prefix'].strip('/')}/{name}"
+
+
+def _image_task(dest, tag, name, image, region, scale, fmt="GeoTIFF"):
+    common = dict(image=image, description=f"{tag}_{name}", region=region, scale=scale,
+                  crs="EPSG:4326", maxPixels=1e13, fileFormat=fmt)
+    if "drive" in dest:
+        return ee.batch.Export.image.toDrive(
+            folder=dest["drive"], fileNamePrefix=_dest_name(dest, tag, name), **common)
+    return ee.batch.Export.image.toCloudStorage(
+        bucket=dest["gcs"]["bucket"], fileNamePrefix=_dest_name(dest, tag, name), **common)
+
+
+def _table_task(dest, tag, name, collection, fmt, selectors=None):
+    kw = dict(collection=collection, description=f"{tag}_{name}", fileFormat=fmt)
+    if selectors:
+        kw["selectors"] = selectors
+    if "drive" in dest:
+        return ee.batch.Export.table.toDrive(
+            folder=dest["drive"], fileNamePrefix=_dest_name(dest, tag, name), **kw)
+    return ee.batch.Export.table.toCloudStorage(
+        bucket=dest["gcs"]["bucket"], fileNamePrefix=_dest_name(dest, tag, name), **kw)
+
+
+def start_exports(run, dest, vectors=True, asset_root=None, log=print):
+    """Create and start the export tasks. dest = {"drive": folder} or
+    {"gcs": {"bucket": ..., "prefix": ...}}. Returns the started tasks."""
+    scale = run.cfg["export_scale"]
+    tag = run.tag
     # masked pixels would be written as 0 dB ("no change"), so give dVV an explicit nodata value
-    dvv_out = diff.float().unmask(NODATA_DVV)
+    dvv_out = run.diff.float().unmask(NODATA_DVV)
     tasks = [
-        ee.batch.Export.image.toDrive(
-            image=final, description=f"{tag}_flood", folder=folder,
-            fileNamePrefix=f"{tag}_flood", region=region, scale=scale,
-            crs="EPSG:4326", maxPixels=1e13, fileFormat="GeoTIFF"),
-        ee.batch.Export.image.toDrive(
-            image=dvv_out, description=f"{tag}_dvv_db", folder=folder,
-            fileNamePrefix=f"{tag}_dvv_db", region=region, scale=scale,
-            crs="EPSG:4326", maxPixels=1e13, fileFormat="GeoTIFF"),
-        ee.batch.Export.table.toDrive(
-            collection=stats, description=f"{tag}_stats", folder=folder,
-            fileNamePrefix=f"{tag}_stats", fileFormat="CSV", selectors=STATS_COLUMNS),
+        _image_task(dest, tag, "flood", run.final, run.region, scale),
+        _image_task(dest, tag, "dvv_db", dvv_out, run.region, scale),
+        _table_task(dest, tag, "stats", run.stats, "CSV", STATS_COLUMNS),
     ]
-    if args.vectors:
-        vec = final.selfMask().reduceToVectors(
-            geometry=region, scale=scale, crs="EPSG:4326", geometryType="polygon",
+    if vectors:
+        vec = run.final.selfMask().reduceToVectors(
+            geometry=run.region, scale=scale, crs="EPSG:4326", geometryType="polygon",
             eightConnected=True, maxPixels=1e13, tileScale=8)
-        tasks.append(ee.batch.Export.table.toDrive(
-            collection=vec, description=f"{tag}_flood_vec", folder=folder,
-            fileNamePrefix=f"{tag}_flood_vec", fileFormat="GeoJSON"))
-    if args.asset_root:
+        tasks.append(_table_task(dest, tag, "flood_vec", vec, "GeoJSON"))
+    if asset_root:
         tasks.append(ee.batch.Export.image.toAsset(
-            image=final, description=f"{tag}_flood_asset",
-            assetId=f"{args.asset_root}/{tag}_flood", region=region, scale=scale,
+            image=run.final, description=f"{tag}_flood_asset",
+            assetId=f"{asset_root}/{tag}_flood", region=run.region, scale=scale,
             crs="EPSG:4326", maxPixels=1e13, pyramidingPolicy={".default": "mode"}))
     for t in tasks:
         t.start()
-        print(f"   started: {t.config['description']}  (id {t.id})")
+        log(f"   started: {t.config['description']}  (id {t.id})")
     return tasks
+
+
+# ---- map images for the website (rendered by Earth Engine from the SAME images as the exports)
+PREVIEW_LAYERS = ("pre_vv", "post_vv", "flood", "flood_unmasked", "severity")
+
+
+def preview_images(run):
+    """name -> visualized RGBA ee.Image. Radar views use a fixed -25..0 dB grey stretch."""
+    grey = dict(bands=["VV"], min=-25, max=0, palette=["#000000", "#ffffff"])
+    return {
+        "pre_vv": run.pre.select("VV").visualize(**grey),
+        "post_vv": run.post.select("VV").visualize(**grey),
+        "flood": run.final.selfMask().visualize(min=0, max=1, palette=["#22d3ee"], opacity=0.85),
+        "flood_unmasked": run.unmasked.selfMask().visualize(min=0, max=1, palette=["#f5a524"],
+                                                             opacity=0.85),
+        # severity = size of the backscatter drop (dB), shown only where the drop exceeds 1.5 dB
+        "severity": run.diff.multiply(-1).updateMask(run.diff.lt(-1.5))
+                    .visualize(min=1.5, max=10, palette=["#fde68a", "#f97316", "#b91c1c"]),
+    }
+
+
+def preview_urls(run, max_dim=1600):
+    """name -> PNG URL (EPSG:3857, aspect preserved) + [[south, west], [north, east]] bounds."""
+    bbox = run.region.bounds()
+    ring = bbox.coordinates().get(0).getInfo()
+    lons, lats = [p[0] for p in ring], [p[1] for p in ring]
+    bounds = [[min(lats), min(lons)], [max(lats), max(lons)]]
+    urls = {name: img.getThumbURL({"region": bbox, "dimensions": max_dim, "format": "png",
+                                   "crs": "EPSG:3857"})
+            for name, img in preview_images(run).items()}
+    return urls, bounds
+
+
+def preflight_info(country, level, name, parent, pre, post):
+    """ONE Earth Engine round trip: region match/area/bounds and S1 IW image counts per pass and window."""
+    fc = gaul(country, level, parent).filter(ee.Filter.eq(f"ADM{level}_NAME", name))
+    region = fc.geometry()
+    d = {"n_regions": fc.size(), "area_km2": region.area(1).divide(1e6),
+         "bounds": region.bounds().coordinates().get(0)}
+    for p in ("DESCENDING", "ASCENDING"):
+        d[f"{p}_pre"] = s1_collection(region, pre[0], pre[1], p).size()
+        d[f"{p}_post"] = s1_collection(region, post[0], post[1], p).size()
+    info = ee.Dictionary(d).getInfo()
+    ring = info["bounds"]
+    lons, lats = [q[0] for q in ring], [q[1] for q in ring]
+    return {"n_regions": info["n_regions"], "area_km2": info["area_km2"],
+            "bounds": [[min(lats), min(lons)], [max(lats), max(lons)]],
+            "counts": {p: {"pre": info[f"{p}_pre"], "post": info[f"{p}_post"]}
+                       for p in ("DESCENDING", "ASCENDING")}}
+
+
+def run_region(key, ev, name, args):
+    """CLI entry: build, optionally print stats, start exports to Drive (or GCS)."""
+    run = prepare_run(key, ev, name, no_rf=args.no_rf)
+    if args.print_stats:
+        print("   stats:", json.dumps(run.stats.first().toDictionary().getInfo(), indent=2))
+    if args.no_export:
+        return []
+    if getattr(args, "gcs_bucket", None):
+        dest = {"gcs": {"bucket": args.gcs_bucket,
+                        "prefix": f"{args.gcs_prefix.strip('/')}/{run.tag}"}}
+    else:
+        dest = {"drive": args.drive_folder}
+    return start_exports(run, dest, vectors=args.vectors, asset_root=args.asset_root)
 
 
 def main():
@@ -379,6 +503,9 @@ def main():
     ap.add_argument("--no-rf", action="store_true", help="skip Random Forest refinement")
     ap.add_argument("--vectors", action="store_true", help="also export flood polygons (GeoJSON)")
     ap.add_argument("--drive-folder", default="flood_outputs")
+    ap.add_argument("--gcs-bucket", default=None,
+                    help="export to this Cloud Storage bucket instead of Google Drive")
+    ap.add_argument("--gcs-prefix", default="results", help="folder inside the bucket")
     ap.add_argument("--asset-root", default=None,
                     help="e.g. projects/YOUR_PROJECT/assets/flood (folder must exist)")
     ap.add_argument("--print-stats", action="store_true",

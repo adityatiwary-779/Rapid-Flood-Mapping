@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 from shapely.geometry import LineString, Point, box
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "pipeline")
 sys.path.insert(0, ROOT)
 
 
