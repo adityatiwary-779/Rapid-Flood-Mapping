@@ -71,3 +71,22 @@ def test_one_stray_edge_row_is_trimmed_but_bigger_errors_are_not():
     assert len(b.pack_layers(s, 3, 3)["flood"]) == 9
     with pytest.raises(ValueError, match="shape"):
         b.pack_layers(_sample(0.5, 6, 3), 3, 3)
+
+
+def test_with_mirrors_falls_through_then_succeeds_and_reports_all_errors():
+    class Cfg: overpass_url = ""
+    calls = []
+
+    def fn():
+        calls.append(Cfg.overpass_url)
+        if len(calls) < 4:
+            raise ConnectionError("closed")
+        return "ok"
+    assert b.with_mirrors(Cfg, fn, ["a", "b", "c"], sleep=lambda s: None, log=lambda m: None) == "ok"
+    assert calls == ["a", "a", "b", "b"]
+
+    def bad():
+        raise TimeoutError("slow")
+    with pytest.raises(SystemExit) as ei:
+        b.with_mirrors(Cfg, bad, ["a", "b"], sleep=lambda s: None, log=lambda m: None)
+    assert "a:" in str(ei.value) and "b:" in str(ei.value)

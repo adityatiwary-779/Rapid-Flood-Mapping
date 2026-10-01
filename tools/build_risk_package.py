@@ -92,6 +92,29 @@ def pois_from_records(records, kind, cap):
     return out
 
 
+MIRRORS = ["https://overpass-api.de/api", "https://overpass.private.coffee/api", "https://overpass.kumi.systems/api",
+           "https://maps.mail.ru/osm/tools/overpass/api"]
+
+
+def with_mirrors(settings, fn, mirrors, attempts_per_mirror=2, wait=5, log=print, sleep=None):
+    """Run fn() against each Overpass mirror in turn (and retry once each) until one works; fail with every error listed."""
+    import time
+    sleep = sleep or time.sleep
+    attr = "overpass_url" if hasattr(settings, "overpass_url") else "overpass_endpoint"
+    errors = []
+    for m in mirrors:
+        setattr(settings, attr, m)
+        for i in range(attempts_per_mirror):
+            try:
+                return fn()
+            except Exception as exc:   # network, timeout, rate limit, server closed the connection
+                errors.append(f"{m}: {type(exc).__name__}: {exc}")
+                log(f"  {m} failed ({type(exc).__name__}); " + ("retrying" if i + 1 < attempts_per_mirror else "trying the next server"))
+                sleep(wait)
+    raise SystemExit("OpenStreetMap download failed on every server:\n  " + "\n  ".join(errors) +
+                     "\nTry again in a few minutes, or on a different network (phone hotspot).")
+
+
 def write_package(out_dir, pkg):
     out = pathlib.Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -190,18 +213,21 @@ def osm_stage(args):
         raise SystemExit(f"Run --stage ee for {args.district} first (no real layers found in {args.out}/{args.id}.json).")
     poly = _district_polygon(args)
     print("Downloading the road network from OpenStreetMap (can take several minutes) ...")
-    try:
+    ox.settings.requests_timeout = 300
+    ox.settings.max_query_area_size = 4e8   # smaller pieces: big single queries are what public servers drop
+
+    def download():
         G = ox.graph_from_polygon(poly, custom_filter=ROAD_FILTER, simplify=True, retain_all=False)
         G = ox.truncate.largest_component(G, strongly=False)
         recs = {}
         for kind, tags in (("hospital", {"amenity": "hospital"}),
                            ("shelter", {"amenity": ["shelter", "community_centre", "school"], "emergency": "assembly_point"})):
             gdf = ox.features_from_polygon(poly, tags)
-            recs[kind] = [dict(name=_clean_name(r.get("name")),
-                               lat=g.representative_point().y, lon=g.representative_point().x)
+            recs[kind] = [dict(name=_clean_name(r.get("name")), lat=g.representative_point().y, lon=g.representative_point().x)
                           for g, (_, r) in zip(gdf.geometry, gdf.iterrows())]
-    except Exception as exc:
-        raise SystemExit(f"OpenStreetMap download failed: {exc}\nSwitch to a network that can reach overpass-api.de (for example a phone hotspot) and run this stage again.")
+        return G, recs
+
+    G, recs = with_mirrors(ox.settings, download, MIRRORS, log=print)
     graph = graph_from_nx(G)
     pois = pois_from_records(recs["hospital"], "hospital", 60) + pois_from_records(recs["shelter"], "shelter", 80)
     if not pois or not graph["edges"]:
