@@ -225,6 +225,9 @@ def osm_stage(args):
             gdf = ox.features_from_polygon(poly, tags)
             recs[kind] = [dict(name=_clean_name(r.get("name")), lat=g.representative_point().y, lon=g.representative_point().x)
                           for g, (_, r) in zip(gdf.geometry, gdf.iterrows())]
+        gdf = ox.features_from_polygon(poly, {"place": sorted(PLACE_CLASSES)})
+        recs["settlement"] = [dict(name=_clean_name(r.get("name")), lat=g.representative_point().y, lon=g.representative_point().x)
+                              for g, (_, r) in zip(gdf.geometry, gdf.iterrows())]
         return G, recs
 
     G, recs = with_mirrors(ox.settings, download, MIRRORS, log=print)
@@ -233,8 +236,105 @@ def osm_stage(args):
     if not pois or not graph["edges"]:
         raise SystemExit("OpenStreetMap returned no roads or no facilities for this district; not writing an empty package.")
     pkg["graph"], pkg["pois"] = graph, pois
+    pkg["settlements"] = pois_from_records(recs["settlement"], "settlement", 150)
     write_package(args.out, pkg)
     print(f"wrote roads ({len(graph['nodes'])} nodes, {len(graph['edges'])} segments) and {len(pois)} facilities")
+
+
+MOTORABLE = {"motorway", "trunk", "primary", "secondary", "tertiary", "unclassified", "residential",
+             "motorway_link", "trunk_link", "primary_link", "secondary_link", "tertiary_link"}
+HOSPITAL_CLASSES = {"hospital"}
+SHELTER_CLASSES = {"shelter", "community_centre", "school"}
+PLACE_CLASSES = {"city", "town", "village", "suburb", "hamlet"}
+
+
+def _hav(a, b):
+    r = 6371000
+    p1, p2 = math.radians(a[1]), math.radians(b[1])
+    h = math.sin((p2 - p1) / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(math.radians(b[0] - a[0]) / 2) ** 2
+    return 2 * r * math.asin(math.sqrt(h))
+
+
+def graph_from_lines(lines):
+    """lines: [[(lon, lat), ...], ...] (road centre-lines sharing vertices at junctions) -> compact undirected graph.
+    Only line ends and shared vertices become nodes; the stretches between them are merged into one edge.
+    Keeps the largest connected piece."""
+    import networkx as nx
+    lines = [[(round(x, 5), round(y, 5)) for x, y in ln] for ln in lines if len(ln) >= 2]
+    seen, key = {}, set()
+    for ln in lines:
+        key.add(ln[0]); key.add(ln[-1])
+        for pt in set(ln):
+            seen[pt] = seen.get(pt, 0) + 1
+    key |= {pt for pt, c in seen.items() if c > 1}
+    G = nx.Graph()
+    for ln in lines:
+        start, acc = ln[0], 0.0
+        for a, b in zip(ln, ln[1:]):
+            acc += _hav(a, b)
+            if b in key:
+                if start != b and acc > 0:
+                    if not G.has_edge(start, b) or G[start][b]["length"] > acc:
+                        G.add_edge(start, b, length=acc)
+                start, acc = b, 0.0
+    if not G.number_of_nodes():
+        return dict(nodes=[], edges=[])
+    comp = max(nx.connected_components(G), key=len)
+    G = G.subgraph(comp)
+    ids = {n: i for i, n in enumerate(G.nodes)}
+    return dict(nodes=[[n[1], n[0]] for n in G.nodes],
+                edges=sorted([ids[u], ids[v], round(d["length"], 1)] for u, v, d in G.edges(data=True)))
+
+
+def records_from_gdf(gdf, classes):
+    """Geofabrik layer -> [{name, lat, lon}] for rows whose fclass is in classes (polygons use an interior point)."""
+    out = []
+    if gdf is None or not len(gdf):
+        return out
+    for _, r in gdf.iterrows():
+        if r.get("fclass") in classes and r.geometry is not None and not r.geometry.is_empty:
+            pt = r.geometry.representative_point()
+            out.append(dict(name=_clean_name(r.get("name")), lat=pt.y, lon=pt.x))
+    return out
+
+
+def offline_stage(args):
+    """Roads, facilities and settlements from downloaded Geofabrik files (gis_osm_*_free_1.shp). No network needed."""
+    import geopandas as gpd
+    import pandas as pd
+    pkg = load_package(args.out, args.id)
+    if not pkg or pkg["provenance"]["kind"] != "real":
+        raise SystemExit(f"Run --stage ee for {args.district} first (no real layers found in {args.out}/{args.id}.json).")
+    s, w, n, e = pkg["bounds"]
+    bbox = (w, s, e, n)
+
+    def read(path):
+        g = gpd.read_file(path, bbox=bbox)
+        return g.set_crs(4326) if g.crs is None else g.to_crs(4326)
+
+    roads = read(args.roads_file)
+    if "fclass" not in roads.columns:
+        raise SystemExit(f"{args.roads_file} has no 'fclass' column; use Geofabrik's gis_osm_roads_free_1.shp.")
+    roads = roads[roads["fclass"].isin(MOTORABLE)]
+    lines = []
+    for g in roads.geometry:
+        if g is None or g.is_empty:
+            continue
+        for part in (g.geoms if g.geom_type == "MultiLineString" else [g]):
+            lines.append(list(part.coords))
+    graph = graph_from_lines(lines)
+    pois_gdf = pd.concat([read(f) for f in args.pois_file], ignore_index=True) if args.pois_file else None
+    pois = (pois_from_records(records_from_gdf(pois_gdf, HOSPITAL_CLASSES), "hospital", 60)
+            + pois_from_records(records_from_gdf(pois_gdf, SHELTER_CLASSES), "shelter", 80))
+    places = read(args.places_file) if args.places_file else None
+    settlements = pois_from_records(records_from_gdf(places, PLACE_CLASSES), "settlement", 150)
+    if not graph["edges"] or not pois:
+        raise SystemExit("The files gave no motorable roads or no hospitals/shelters inside this district's box. "
+                         "Check you downloaded the Kerala extract and passed gis_osm_roads_free_1.shp and the pois files.")
+    pkg["graph"], pkg["pois"], pkg["settlements"] = graph, pois, settlements
+    write_package(args.out, pkg)
+    print(f"wrote roads ({len(graph['nodes'])} nodes, {len(graph['edges'])} segments), {len(pois)} facilities, "
+          f"{len(settlements)} settlements (from local files)")
 
 
 def _clean_name(v):
@@ -258,6 +358,9 @@ def main(argv=None):
     ap.add_argument("--calamities", nargs="+", choices=["flood", "landslide"], default=["flood"])
     ap.add_argument("--events", default="", help="short text shown under the district name")
     ap.add_argument("--s1-event", help="pipeline/events.json key whose Sentinel-1 flood is blended into the flood layer")
+    ap.add_argument("--roads-file", help="OFFLINE: Geofabrik gis_osm_roads_free_1.shp (skips Overpass)")
+    ap.add_argument("--pois-file", nargs="+", help="OFFLINE: gis_osm_pois_free_1.shp and optionally gis_osm_pois_a_free_1.shp")
+    ap.add_argument("--places-file", help="OFFLINE: gis_osm_places_free_1.shp (settlements)")
     ap.add_argument("--stage", choices=["ee", "osm", "all"], default="all")
     ap.add_argument("--out", default=str(ROOT / "public/data/risk"))
     args = ap.parse_args(argv)
@@ -267,7 +370,7 @@ def main(argv=None):
     if args.stage in ("ee", "all"):
         ee_stage(args)
     if args.stage in ("osm", "all"):
-        osm_stage(args)
+        (offline_stage if args.roads_file else osm_stage)(args)
 
 
 if __name__ == "__main__":

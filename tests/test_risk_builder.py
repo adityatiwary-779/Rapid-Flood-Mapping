@@ -90,3 +90,43 @@ def test_with_mirrors_falls_through_then_succeeds_and_reports_all_errors():
     with pytest.raises(SystemExit) as ei:
         b.with_mirrors(Cfg, bad, ["a", "b"], sleep=lambda s: None, log=lambda m: None)
     assert "a:" in str(ei.value) and "b:" in str(ei.value)
+
+
+def test_graph_from_lines_merges_stretches_and_keeps_largest_piece():
+    # a T junction at (76.2, 9.2); the stem has an extra middle vertex that must disappear
+    lines = [[(76.1, 9.2), (76.2, 9.2)], [(76.2, 9.2), (76.3, 9.2)], [(76.2, 9.2), (76.2, 9.15), (76.2, 9.1)],
+             [(77.0, 10.0), (77.01, 10.0)]]   # a separate island, dropped
+    g = b.graph_from_lines(lines)
+    assert len(g["nodes"]) == 4 and len(g["edges"]) == 3
+    stem = max(g["edges"], key=lambda e: e[2])
+    assert 10000 < stem[2] < 12000   # ~0.1 degree of latitude
+
+
+def test_records_from_gdf_filters_by_fclass_and_uses_polygon_points():
+    import geopandas as gpd
+    from shapely.geometry import Point, box
+    gdf = gpd.GeoDataFrame({"fclass": ["hospital", "school", "bank"], "name": ["H", None, "B"],
+                            "geometry": [Point(76.1, 9.1), box(76.2, 9.2, 76.3, 9.3), Point(76.4, 9.4)]}, crs=4326)
+    recs = b.records_from_gdf(gdf, {"hospital", "school"})
+    assert [r["name"] for r in recs] == ["H", None] and 76.2 < recs[1]["lon"] < 76.3
+
+
+def test_offline_stage_end_to_end_with_small_files(tmp_path):
+    import geopandas as gpd
+    from shapely.geometry import LineString, Point
+    base = dict(id="d", name="D", state="Kerala", bounds=[9.0, 76.0, 9.5, 76.5], rows=3, cols=3, calamities=["flood"], events="x",
+                layers={}, graph=dict(nodes=[], edges=[]), pois=[], provenance=dict(kind="real", sources="s"))
+    b.write_package(tmp_path, base)
+    gpd.GeoDataFrame({"fclass": ["primary", "footway", "residential"],
+                      "geometry": [LineString([(76.1, 9.1), (76.2, 9.1)]), LineString([(76.1, 9.1), (76.1, 9.2)]),
+                                   LineString([(76.2, 9.1), (76.3, 9.1)])]}, crs=4326).to_file(tmp_path / "roads.shp")
+    gpd.GeoDataFrame({"fclass": ["hospital", "school"], "name": ["Gen Hosp", "Sch"],
+                      "geometry": [Point(76.2, 9.1), Point(76.3, 9.1)]}, crs=4326).to_file(tmp_path / "pois.shp")
+    gpd.GeoDataFrame({"fclass": ["village"], "name": ["Vill"], "geometry": [Point(76.15, 9.1)]}, crs=4326).to_file(tmp_path / "places.shp")
+    import argparse
+    a = argparse.Namespace(out=str(tmp_path), id="d", district="D", roads_file=str(tmp_path / "roads.shp"),
+                           pois_file=[str(tmp_path / "pois.shp")], places_file=str(tmp_path / "places.shp"))
+    b.offline_stage(a)
+    pkg = json.load(open(tmp_path / "d.json"))
+    assert len(pkg["graph"]["edges"]) == 2 and {p["type"] for p in pkg["pois"]} == {"hospital", "shelter"}
+    assert pkg["settlements"][0]["name"] == "Vill"
