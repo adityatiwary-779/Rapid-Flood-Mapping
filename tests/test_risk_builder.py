@@ -157,3 +157,43 @@ def test_offline_stage_from_a_raw_osm_extract(tmp_path):
     assert len(pkg["graph"]["edges"]) == 2                       # footway excluded
     assert {(p["type"], p["name"]) for p in pkg["pois"]} == {("hospital", "Gen Hosp"), ("shelter", "Sch")}
     assert [x["name"] for x in pkg["settlements"]] == ["Vill"]
+
+
+def test_tiles_cover_the_box_and_are_small():
+    ts = b.tiles([9.0, 76.6, 9.5, 77.2], 0.2)
+    assert len(ts) == 9 and min(t[0] for t in ts) == 9.0 and abs(max(t[3] for t in ts) - 77.2) < 1e-9
+    assert all(t[2] - t[0] <= 0.2 + 1e-9 and t[3] - t[1] <= 0.2 + 1e-9 for t in ts)
+
+
+def test_overpass_download_dedupes_across_tiles_and_survives_a_bad_mirror(tmp_path):
+    import argparse
+    way = {"type": "way", "id": 1, "geometry": [{"lat": 9.1, "lon": 76.1}, {"lat": 9.1, "lon": 76.2}]}
+    way2 = {"type": "way", "id": 2, "geometry": [{"lat": 9.1, "lon": 76.2}, {"lat": 9.1, "lon": 76.3}]}
+    hosp = {"type": "node", "id": 5, "lat": 9.1, "lon": 76.2, "tags": {"amenity": "hospital", "name": "H"}}
+    school = {"type": "way", "id": 6, "center": {"lat": 9.1, "lon": 76.3}, "tags": {"amenity": "school", "name": "S"}}
+    vill = {"type": "node", "id": 7, "lat": 9.1, "lon": 76.15, "tags": {"place": "village", "name": "V"}}
+    calls = []
+
+    def post(url, q):
+        calls.append(url)
+        if url == b.MIRRORS[0]:
+            raise ConnectionError("blocked")          # first mirror unreachable: must fall through to the second
+        return [way, way2] if q.startswith('[out:json][timeout:120];way') else [hosp, school, vill]
+
+    lines, places = b.fetch_overpass([9.0, 76.0, 9.3, 76.4], post=post, log=lambda m: None, sleep=lambda s: None)
+    assert len(lines) == 2                              # same ways returned by every tile counted once
+    assert [r["name"] for r in places["hospital"]] == ["H"] and [r["name"] for r in places["shelter"]] == ["S"]
+    assert [r["name"] for r in places["settlement"]] == ["V"]
+    assert b.MIRRORS[1] in calls
+
+    pkg = dict(id="d", name="D", state="Kerala", bounds=[9.0, 76.0, 9.3, 76.4], rows=3, cols=3, calamities=["flood"], events="x",
+               layers={}, graph=dict(nodes=[], edges=[]), pois=[], provenance=dict(kind="real", sources="s"))
+    b.write_package(tmp_path, pkg)
+    orig = b.fetch_overpass
+    b.fetch_overpass = lambda bounds: orig(bounds, post=post, log=lambda m: None, sleep=lambda s: None)
+    try:
+        b.osm_stage(argparse.Namespace(out=str(tmp_path), id="d", district="D"))
+    finally:
+        b.fetch_overpass = orig
+    out = json.load(open(tmp_path / "d.json"))
+    assert len(out["graph"]["edges"]) == 2 and len(out["pois"]) == 2 and out["settlements"][0]["name"] == "V"

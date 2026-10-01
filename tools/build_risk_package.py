@@ -21,6 +21,7 @@ Layers (all 0..1, row 0 = north, ~900 m cells):
 """
 import argparse
 import json
+import types
 import math
 import os
 import pathlib
@@ -205,42 +206,6 @@ def _bounds(region):
     return min(ys), min(xs), max(ys), max(xs)
 
 
-# ---------------------------------------------------------------- OSM stage (needs a network that reaches Overpass)
-def osm_stage(args):
-    import osmnx as ox
-    pkg = load_package(args.out, args.id)
-    if not pkg or pkg["provenance"]["kind"] != "real":
-        raise SystemExit(f"Run --stage ee for {args.district} first (no real layers found in {args.out}/{args.id}.json).")
-    poly = _district_polygon(args)
-    print("Downloading the road network from OpenStreetMap (can take several minutes) ...")
-    ox.settings.requests_timeout = 300
-    ox.settings.max_query_area_size = 4e8   # smaller pieces: big single queries are what public servers drop
-
-    def download():
-        G = ox.graph_from_polygon(poly, custom_filter=ROAD_FILTER, simplify=True, retain_all=False)
-        G = ox.truncate.largest_component(G, strongly=False)
-        recs = {}
-        for kind, tags in (("hospital", {"amenity": "hospital"}),
-                           ("shelter", {"amenity": ["shelter", "community_centre", "school"], "emergency": "assembly_point"})):
-            gdf = ox.features_from_polygon(poly, tags)
-            recs[kind] = [dict(name=_clean_name(r.get("name")), lat=g.representative_point().y, lon=g.representative_point().x)
-                          for g, (_, r) in zip(gdf.geometry, gdf.iterrows())]
-        gdf = ox.features_from_polygon(poly, {"place": sorted(PLACE_CLASSES)})
-        recs["settlement"] = [dict(name=_clean_name(r.get("name")), lat=g.representative_point().y, lon=g.representative_point().x)
-                              for g, (_, r) in zip(gdf.geometry, gdf.iterrows())]
-        return G, recs
-
-    G, recs = with_mirrors(ox.settings, download, MIRRORS, log=print)
-    graph = graph_from_nx(G)
-    pois = pois_from_records(recs["hospital"], "hospital", 60) + pois_from_records(recs["shelter"], "shelter", 80)
-    if not pois or not graph["edges"]:
-        raise SystemExit("OpenStreetMap returned no roads or no facilities for this district; not writing an empty package.")
-    pkg["graph"], pkg["pois"] = graph, pois
-    pkg["settlements"] = pois_from_records(recs["settlement"], "settlement", 150)
-    write_package(args.out, pkg)
-    print(f"wrote roads ({len(graph['nodes'])} nodes, {len(graph['edges'])} segments) and {len(pois)} facilities")
-
-
 MOTORABLE = {"motorway", "trunk", "primary", "secondary", "tertiary", "unclassified", "residential",
              "motorway_link", "trunk_link", "primary_link", "secondary_link", "tertiary_link"}
 HOSPITAL_CLASSES = {"hospital"}
@@ -385,12 +350,97 @@ def _clean_name(v):
     return None if v is None or (isinstance(v, float) and math.isnan(v)) or not str(v).strip() else str(v).strip()
 
 
-def _district_polygon(args):
-    import flood_pipeline as fp
-    from shapely.geometry import shape
-    fp.init_ee(args.project)
-    geom = fp.get_region("India", 2, args.gaul_name or args.district, args.state).simplify(300).getInfo()
-    return shape(geom)
+# ---------------------------------------------------------------- OSM stage (needs a network that reaches Overpass)
+UA = "RapidFloodMapping-hackathon/1.0 (student project; roads and facilities for a risk map)"
+ROAD_RE = "^(motorway|trunk|primary|secondary|tertiary|unclassified|residential)(_link)?$"
+
+
+def tiles(bounds, size=0.2):
+    """Split [s, w, n, e] into tiles of at most `size` degrees: public Overpass servers drop big queries."""
+    s, w, n, e = bounds
+    rows, cols = max(1, math.ceil((n - s) / size - 1e-6)), max(1, math.ceil((e - w) / size - 1e-6))
+    dy, dx = (n - s) / rows, (e - w) / cols
+    return [(s + i * dy, w + j * dx, s + (i + 1) * dy, w + (j + 1) * dx) for i in range(rows) for j in range(cols)]
+
+
+def roads_query(t):
+    return f'[out:json][timeout:120];way["highway"~"{ROAD_RE}"]({t[0]:.5f},{t[1]:.5f},{t[2]:.5f},{t[3]:.5f});out geom;'
+
+
+def places_query(t):
+    box = f"({t[0]:.5f},{t[1]:.5f},{t[2]:.5f},{t[3]:.5f})"
+    return ('[out:json][timeout:120];(nwr["amenity"~"^(hospital|shelter|community_centre|school)$"]' + box +
+            ';node["place"~"^(city|town|village|suburb|hamlet)$"]' + box + ');out center tags;')
+
+
+def parse_roads(elements):
+    """Overpass `out geom` ways -> {way id: [(lon, lat), ...]} (a dict so tiles that overlap do not double count)."""
+    return {el["id"]: [(p["lon"], p["lat"]) for p in el["geometry"]] for el in elements
+            if el.get("type") == "way" and len(el.get("geometry", [])) >= 2}
+
+
+def parse_places(elements):
+    """Overpass `out center tags` -> {"hospital": [...], "shelter": [...], "settlement": [...]} of {name, lat, lon}."""
+    out = {"hospital": {}, "shelter": {}, "settlement": {}}
+    for el in elements:
+        t = el.get("tags", {})
+        c = el if "lat" in el else el.get("center")
+        if not c:
+            continue
+        kind = ("hospital" if t.get("amenity") == "hospital" else "shelter" if t.get("amenity") in SHELTER_CLASSES
+                else "settlement" if t.get("place") in PLACE_CLASSES else None)
+        if kind:
+            out[kind][(el.get("type"), el.get("id"))] = dict(name=_clean_name(t.get("name")), lat=c["lat"], lon=c["lon"])
+    return {k: list(v.values()) for k, v in out.items()}
+
+
+def overpass_post(url, query, timeout=(20, 200)):
+    import requests
+    r = requests.post(url.rstrip("/") + "/interpreter", data={"data": query}, headers={"User-Agent": UA}, timeout=timeout)
+    if r.status_code != 200:
+        raise ConnectionError(f"HTTP {r.status_code} {r.text[:120]!r}")
+    return r.json().get("elements", [])
+
+
+def fetch_overpass(bounds, post=overpass_post, mirrors=None, log=print, sleep=None):
+    """Download roads, facilities and settlements tile by tile. `post(url, query)` is injectable for tests."""
+    import time
+    sleep = sleep or time.sleep
+    ts = tiles(bounds)
+    cur = types.SimpleNamespace(overpass_url="")   # with_mirrors() stores the server it is trying here
+    roads, places = {}, {"hospital": [], "shelter": [], "settlement": []}
+    seen = {k: set() for k in places}
+    for i, t in enumerate(ts, 1):
+        log(f"  tile {i}/{len(ts)} ...")
+        for q, handler in ((roads_query(t), "roads"), (places_query(t), "places")):
+            els = with_mirrors(cur, lambda: post(cur.overpass_url, q), mirrors or MIRRORS, wait=3, log=log, sleep=sleep)
+            if handler == "roads":
+                roads.update(parse_roads(els))
+            else:
+                for kind, recs in parse_places(els).items():
+                    for r in recs:
+                        key = (round(r["lat"], 5), round(r["lon"], 5), r["name"])
+                        if key not in seen[kind]:
+                            seen[kind].add(key)
+                            places[kind].append(r)
+        sleep(1)   # be polite to a free public service
+    return list(roads.values()), places
+
+
+def osm_stage(args):
+    pkg = load_package(args.out, args.id)
+    if not pkg or pkg["provenance"]["kind"] != "real":
+        raise SystemExit(f"Run --stage ee for {args.district} first (no real layers found in {args.out}/{args.id}.json).")
+    print(f"Downloading roads and facilities from OpenStreetMap in {len(tiles(pkg['bounds']))} small tiles ...")
+    lines, places = fetch_overpass(pkg["bounds"])
+    graph = graph_from_lines(lines)
+    pois = pois_from_records(places["hospital"], "hospital", 60) + pois_from_records(places["shelter"], "shelter", 80)
+    if not pois or not graph["edges"]:
+        raise SystemExit("OpenStreetMap returned no roads or no facilities for this district; not writing an empty package.")
+    pkg["graph"], pkg["pois"] = graph, pois
+    pkg["settlements"] = pois_from_records(places["settlement"], "settlement", 150)
+    write_package(args.out, pkg)
+    print(f"wrote roads ({len(graph['nodes'])} nodes, {len(graph['edges'])} segments), {len(pois)} facilities, {len(pkg['settlements'])} settlements")
 
 
 def main(argv=None):
