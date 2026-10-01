@@ -108,7 +108,7 @@ def ee_stage(args):
     import ee
     import flood_pipeline as fp
     fp.init_ee(args.project)
-    region = fp.get_region("India", 2, args.district, args.state)
+    region = fp.get_region("India", 2, args.gaul_name or args.district, args.state)
     s, w, n, e = _bounds(region)
     dx, dy = (e - w) / GRID, (n - s) / GRID
     rect = ee.Geometry.Rectangle([w, s, e, n], "EPSG:4326", False)
@@ -212,7 +212,7 @@ def _district_polygon(args):
     import flood_pipeline as fp
     from shapely.geometry import shape
     fp.init_ee(args.project)
-    geom = fp.get_region("India", 2, args.district, args.state).simplify(300).getInfo()
+    geom = fp.get_region("India", 2, args.gaul_name or args.district, args.state).simplify(300).getInfo()
     return shape(geom)
 
 
@@ -220,6 +220,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--district", required=True, help="GAUL spelling, e.g. Pathanamthitta")
     ap.add_argument("--state", default="Kerala")
+    ap.add_argument("--gaul-name", help="spelling in the FAO GAUL boundaries if it differs, e.g. Pattanamtitta for Pathanamthitta")
     ap.add_argument("--project", default=os.environ.get("EARTHENGINE_PROJECT"))
     ap.add_argument("--calamities", nargs="+", choices=["flood", "landslide"], default=["flood"])
     ap.add_argument("--events", default="", help="short text shown under the district name")
