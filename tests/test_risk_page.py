@@ -108,3 +108,53 @@ def test_clicking_the_map_sets_a_start(page):
     box = page.locator("#map").bounding_box()
     page.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
     page.wait_for_selector("#routeTable:not([hidden])")
+
+
+def _stub(page, area, mutate):
+    pkg = json.load(open(os.path.join(PKG, area + ".json")))
+    mutate(pkg)
+    page.route(f"**/data/risk/{area}.json", lambda r: r.fulfill(status=200, body=json.dumps(pkg), content_type="application/json"))
+
+
+def test_package_without_roads_disables_routing_and_says_so(browser, url):
+    pg = browser.new_page(viewport={"width": 1280, "height": 900})
+    pg.route("**/tile.openstreetmap.org/**", lambda r: r.fulfill(status=200, body=PNG, content_type="image/png"))
+    _stub(pg, "pathanamthitta", lambda p: p.update(graph=dict(nodes=[], edges=[]), pois=[]))
+    pg.goto(url)
+    pg.wait_for_function("document.querySelectorAll('#kpis dd').length > 0")
+    assert pg.locator("#btnExample").is_disabled()
+    assert "unavailable" in pg.locator("#routeMsg").inner_text()
+    box = pg.locator("#map").bounding_box()
+    pg.mouse.click(box["x"] + 200, box["y"] + 200)
+    assert "no road network" in pg.locator("#routeMsg").inner_text()
+    pg.close()
+
+
+def test_cells_outside_the_district_are_ignored(browser, url):
+    def area_km2(pg):
+        pg.wait_for_function("document.querySelectorAll('#kpis dd').length > 0")
+        return float(pg.locator("#kpis dd").first.inner_text().split()[0])
+
+    def half(p):
+        p["layers"]["inside"] = [1 if (i % p["cols"]) < p["cols"] // 2 else 0 for i in range(p["rows"] * p["cols"])]
+
+    def open_alappuzha(mutate):
+        pg = browser.new_page(viewport={"width": 1280, "height": 900})
+        errs = []
+        pg.on("pageerror", lambda e: errs.append(str(e)))
+        pg.route("**/tile.openstreetmap.org/**", lambda r: r.fulfill(status=200, body=PNG, content_type="image/png"))
+        if mutate:
+            _stub(pg, "alappuzha", mutate)
+        pg.goto(url)
+        pg.wait_for_function("document.querySelectorAll('#area option').length >= 3")
+        pg.select_option("#area", "alappuzha")
+        pg.wait_for_function("document.querySelectorAll('#calamity option').length === 1")
+        pg.wait_for_timeout(300)
+        v = area_km2(pg)
+        pg.close()
+        return v, errs
+
+    full, e1 = open_alappuzha(None)
+    masked, e2 = open_alappuzha(half)
+    assert e1 == [] and e2 == []
+    assert masked < full * 0.7   # the top-10% zone is picked among half the cells, over half the area

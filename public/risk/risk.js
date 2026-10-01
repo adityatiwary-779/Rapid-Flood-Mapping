@@ -27,30 +27,33 @@
 
   function recompute() {
     var pkg = S.pkg, n = pkg.rows * pkg.cols;
-    var res = E.computeRisk(pkg.layers, S.weights, n);
+    var res = E.computeRisk(pkg.layers, S.weights, n), inside = pkg.layers.inside, vals = [], j;
     S.risk = res.risk;
-    S.threshold = E.quantile(res.risk, 1 - Number($('topPct').value) / 100);
+    for (j = 0; j < n; j++) if (!inside || inside[j]) vals.push(res.risk[j]);   // cells outside the district boundary are ignored
+    S.threshold = E.quantile(vals, 1 - Number($('topPct').value) / 100);
     S.nRisk = E.nodeRisks(pkg.graph.nodes, res.risk, pkg.rows, pkg.cols, pkg.bounds);
-    var lo = Math.min.apply(null, res.risk), hi = Math.max.apply(null, res.risk), span = hi - lo || 1;
+    var lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals), span = hi - lo || 1;
     S.lo = lo; S.span = span;
     var op = Number($('opacity').value) / 100;
     if (S.layers.risk) S.map.removeLayer(S.layers.risk);
     if (S.layers.zones) S.map.removeLayer(S.layers.zones);
-    S.layers.risk = L.imageOverlay(gridCanvas(pkg, function (i) { var c = ramp((res.risk[i] - lo) / span); return [c[0], c[1], c[2], 255]; }), bounds(), { opacity: op, pane: 'riskPane', interactive: false }).addTo(S.map);
-    S.layers.zones = L.imageOverlay(gridCanvas(pkg, function (i) { return res.risk[i] >= S.threshold ? [255, 255, 255, 70] : [0, 0, 0, 0]; }), bounds(), { opacity: 1, pane: 'riskPane', interactive: false }).addTo(S.map);
+    S.layers.risk = L.imageOverlay(gridCanvas(pkg, function (i) { if (inside && !inside[i]) return [0, 0, 0, 0]; var c = ramp(Math.min(1, Math.max(0, (res.risk[i] - lo) / span))); return [c[0], c[1], c[2], 255]; }), bounds(), { opacity: op, pane: 'riskPane', interactive: false }).addTo(S.map);
+    S.layers.zones = L.imageOverlay(gridCanvas(pkg, function (i) { return (!inside || inside[i]) && res.risk[i] >= S.threshold ? [255, 255, 255, 70] : [0, 0, 0, 0]; }), bounds(), { opacity: 1, pane: 'riskPane', interactive: false }).addTo(S.map);
     kpis(); route();
   }
 
   function kpis() {
     var pkg = S.pkg, n = pkg.rows * pkg.cols, b = pkg.bounds, kmLat = (b[2] - b[0]) * 111.32, kmLon = (b[3] - b[1]) * 111.32 * Math.cos((b[0] + b[2]) / 2 * Math.PI / 180);
-    var cell = kmLat * kmLon / n, hi = 0, popAll = 0, popHi = 0, i, p = pkg.layers.population || [];
-    for (i = 0; i < n; i++) { popAll += p[i] || 0; if (S.risk[i] >= S.threshold) { hi++; popHi += p[i] || 0; } }
-    var items = [['High-risk area', (hi * cell).toFixed(0) + ' km²'], ['Share of district', (100 * hi / n).toFixed(0) + '%'],
+    var cell = kmLat * kmLon / n, hi = 0, popAll = 0, popHi = 0, cells = 0, i, p = pkg.layers.population || [], inside = pkg.layers.inside;
+    for (i = 0; i < n; i++) { if (inside && !inside[i]) continue; cells++; popAll += p[i] || 0; if (S.risk[i] >= S.threshold) { hi++; popHi += p[i] || 0; } }
+    var items = [['High-risk area', (hi * cell).toFixed(0) + ' km²'], ['Share of district', (100 * hi / (cells || 1)).toFixed(0) + '%'],
       ['Exposure in high-risk zones', popAll ? (100 * popHi / popAll).toFixed(0) + '% of population index' : 'n/a'],
-      ['Road network', pkg.graph.nodes.length + ' nodes, ' + pkg.graph.edges.length + ' segments'], ['Facilities', pkg.pois.length + ' mapped']];
+      ['Road network', hasRoads() ? pkg.graph.nodes.length + ' nodes, ' + pkg.graph.edges.length + ' segments' : 'not loaded yet'], ['Facilities', pkg.pois.length + ' mapped']];
     var dl = $('kpis'); dl.textContent = '';
     items.forEach(function (it) { var d = el('div'); d.appendChild(el('dt', it[0])); d.appendChild(el('dd', it[1])); dl.appendChild(d); });
   }
+
+  function hasRoads() { return S.pkg.graph.nodes.length > 0 && S.pkg.pois.length > 0; }
 
   function clearRoute() {
     ['shortest', 'safest', 'startPin'].forEach(function (k) { if (S.layers[k]) { S.map.removeLayer(S.layers[k]); delete S.layers[k]; } });
@@ -64,6 +67,7 @@
 
   function route() {
     if (!S.start) return;
+    if (!hasRoads()) { $('routeMsg').hidden = false; $('routeMsg').textContent = 'This district has risk layers but no road network or facilities yet, so routes are unavailable.'; $('routeTable').hidden = true; return; }
     var pkg = S.pkg, f = $('facility').value, dests = [];
     pkg.pois.forEach(function (p) { if (f === 'any' || p.type === f) dests.push(E.nearestNode(pkg.graph.nodes, p.lat, p.lon)); });
     var src = E.nearestNode(pkg.graph.nodes, S.start[0], S.start[1]);
@@ -142,7 +146,9 @@
       S.layers.pois = pkg.pois.map(function (p) {
         return L.circleMarker([p.lat, p.lon], { radius: 6, color: '#fff', weight: 1.5, fillColor: p.type === 'hospital' ? '#ef4444' : '#a855f7', fillOpacity: 1, pane: 'routePane' }).bindTooltip(p.name + ' (' + p.type + ')').addTo(S.map);
       });
+      ['btnExample', 'facility', 'alpha'].forEach(function (id) { $(id).disabled = !hasRoads(); });
       applyPreset(); recompute();
+      if (!hasRoads()) { $('routeMsg').textContent = 'Routes are unavailable for this district: no road network or facilities in its data package yet.'; }
     });
   }
 
