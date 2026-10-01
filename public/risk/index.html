@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Risk and Routes – Kerala</title>
+  <meta name="description" content="Multi-hazard risk map and least-risk emergency routing for Kerala districts.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231a1a19'/%3E%3Cpath d='M4 19c4-5 7 5 12 0s8 5 12 0v9H4z' fill='%233987e5'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="../vendor/leaflet/leaflet.css">
+  <link rel="stylesheet" href="../css/app.css">
+  <link rel="stylesheet" href="risk.css">
+</head>
+<body>
+  <header class="top">
+    <h1>Risk and Routes <span class="sub">multi-hazard decision support</span></h1>
+    <nav><a href="../index.html">Flood mapping (Sentinel-1)</a></nav>
+  </header>
+  <div id="provBanner" class="banner demo" role="status" hidden></div>
+  <div class="banner caveat" role="note">
+    <strong>Read this first:</strong> the risk index is a weighted combination of hazard layers. The weights are judgement-based, not fitted to outcomes, and the result has not been validated against recorded losses. Treat it as decision support, not a forecast. Routes use mapped roads only and do not know about live closures.
+  </div>
+  <div id="toast" class="toast" role="alert" hidden></div>
+
+  <main class="layout">
+    <aside class="side">
+      <section class="panel">
+        <h2>Area and calamity</h2>
+        <label for="area">District</label>
+        <select id="area"></select>
+        <p class="hint" id="areaEvents"></p>
+        <label for="calamity">Calamity</label>
+        <select id="calamity"></select>
+      </section>
+
+      <section class="panel">
+        <h2>Risk weights</h2>
+        <p class="hint">Move a slider and the map, high-risk zones and routes update. Weights are rescaled to add up to 100%.</p>
+        <div id="weights"></div>
+        <button id="btnReset" class="btn" type="button">Reset to calamity defaults</button>
+        <label for="topPct">High-risk zones: top <output id="topPctOut">10</output>% of cells</label>
+        <input id="topPct" type="range" min="2" max="40" value="10">
+        <label for="opacity">Map opacity</label>
+        <input id="opacity" type="range" min="10" max="100" value="70">
+      </section>
+
+      <section class="panel">
+        <h2>Emergency route</h2>
+        <p class="hint">Click the map to set a start point, or use the example.</p>
+        <label for="facility">Go to</label>
+        <select id="facility">
+          <option value="any">Nearest hospital or shelter</option>
+          <option value="hospital">Nearest hospital</option>
+          <option value="shelter">Nearest shelter</option>
+        </select>
+        <label for="alpha">Risk avoidance: <output id="alphaOut">6</output> <small>(0 = shortest route only)</small></label>
+        <input id="alpha" type="range" min="0" max="20" value="6">
+        <div class="row">
+          <button id="btnExample" class="btn primary" type="button">Try an example</button>
+          <button id="btnClear" class="btn" type="button">Clear route</button>
+        </div>
+      </section>
+    </aside>
+
+    <section class="main" id="results" tabindex="-1">
+      <div class="panel mapwrap">
+        <div class="mapbox"><div id="map" role="application" aria-label="Risk map"></div></div>
+        <div class="rlegend" aria-label="Legend">
+          <span><i class="sw" style="background:#2c7fb8"></i>low</span>
+          <span><i class="sw" style="background:#fed976"></i>medium</span>
+          <span><i class="sw" style="background:#e31a1c"></i>high risk</span>
+          <span><i class="ln" style="border-color:#f5a524"></i>shortest route</span>
+          <span><i class="ln solid" style="border-color:#22c55e"></i>least-risk route</span>
+        </div>
+      </div>
+
+      <div class="panel" id="routePanel" aria-live="polite">
+        <h2>Route comparison</h2>
+        <p id="routeMsg" class="hint">No route yet. Click the map or press “Try an example”.</p>
+        <table id="routeTable" hidden>
+          <thead><tr><th scope="col"></th><th scope="col">Shortest</th><th scope="col">Least-risk</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <div class="panel">
+        <h2>Area summary</h2>
+        <dl id="kpis" class="kpis"></dl>
+        <p id="provNote" class="hint"></p>
+      </div>
+    </section>
+  </main>
+
+  <script src="../vendor/leaflet/leaflet.js"></script>
+  <script src="engine.js"></script>
+  <script src="risk.js"></script>
+</body>
+</html>

@@ -1,0 +1,35 @@
+{
+ "areas": [
+  {
+   "id": "pathanamthitta",
+   "name": "Pathanamthitta",
+   "state": "Kerala",
+   "calamities": [
+    "flood",
+    "landslide"
+   ],
+   "events": "Floods 2018; landslides in the eastern hills",
+   "kind": "synthetic"
+  },
+  {
+   "id": "alappuzha",
+   "name": "Alappuzha",
+   "state": "Kerala",
+   "calamities": [
+    "flood"
+   ],
+   "events": "Floods 2018",
+   "kind": "synthetic"
+  },
+  {
+   "id": "wayanad",
+   "name": "Wayanad",
+   "state": "Kerala",
+   "calamities": [
+    "landslide"
+   ],
+   "events": "Landslides 2019 and 2024",
+   "kind": "synthetic"
+  }
+ ]
+}
