@@ -39,13 +39,20 @@ SOURCES = ("NASADEM, JRC Global Surface Water, CHIRPS, ESA WorldCover, WorldPop 
 
 
 # ---------------------------------------------------------------- pure helpers (unit-tested)
+def _trim(g, rows, cols):
+    """Drop at most one stray edge row/column (a sampling rectangle that touches a cell boundary can return one extra)."""
+    if g and rows <= len(g) <= rows + 1 and cols <= len(g[0]) <= cols + 1:
+        return [r[:cols] for r in g[:rows]]
+    return g
+
+
 def pack_layers(sample, rows=GRID, cols=GRID):
     """sample: {band: 2D list rows x cols} -> flat 2-decimal lists. Fails loudly on a bad shape or NaN."""
     out = {}
     for k in LAYERS + ["inside"]:
         if k not in sample:
             raise ValueError(f"layer '{k}' missing from the Earth Engine sample")
-        g = sample[k]
+        g = _trim(sample[k], rows, cols)
         if len(g) != rows or any(len(r) != cols for r in g):
             raise ValueError(f"layer '{k}' has shape {len(g)}x{len(g[0]) if g else 0}, expected {rows}x{cols}")
         flat = [v for r in g for v in r]
@@ -111,7 +118,7 @@ def ee_stage(args):
     region = fp.get_region("India", 2, args.gaul_name or args.district, args.state)
     s, w, n, e = _bounds(region)
     dx, dy = (e - w) / GRID, (n - s) / GRID
-    rect = ee.Geometry.Rectangle([w, s, e, n], "EPSG:4326", False)
+    rect = ee.Geometry.Rectangle([w + dx / 2, s + dy / 2, e - dx / 2, n - dy / 2], "EPSG:4326", False)   # inset half a cell so exactly GRID x GRID pixels fall inside
     xf = [dx, 0, w, 0, -dy, n]
 
     dem = ee.Image("NASA/NASADEM_HGT/001").select("elevation")

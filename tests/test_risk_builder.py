@@ -64,3 +64,10 @@ def test_write_package_updates_index_and_real_sorts_first(tmp_path):
 def test_refuses_placeholders(monkeypatch):
     with pytest.raises(SystemExit, match="placeholder"):
         b.main(["--district", "Pathanamthitta", "--project", "YOUR_PROJECT", "--stage", "ee"])
+
+
+def test_one_stray_edge_row_is_trimmed_but_bigger_errors_are_not():
+    s = _sample(0.5, 4, 3)          # 4 rows when 3 expected
+    assert len(b.pack_layers(s, 3, 3)["flood"]) == 9
+    with pytest.raises(ValueError, match="shape"):
+        b.pack_layers(_sample(0.5, 6, 3), 3, 3)
