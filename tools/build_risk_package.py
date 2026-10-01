@@ -298,6 +298,41 @@ def records_from_gdf(gdf, classes):
     return out
 
 
+def _tag(other_tags, key):
+    import re
+    if not isinstance(other_tags, str):
+        return None
+    m = re.search(r'"%s"=>"([^"]*)"' % re.escape(key), other_tags)
+    return m.group(1) if m else None
+
+
+def read_osm_extract(path, bbox):
+    """Read a raw OpenStreetMap extract (.osm.pbf or .osm) with GDAL's OSM driver, limited to bbox = (w, s, e, n).
+    Returns (roads, pois, places) GeoDataFrames that carry an `fclass` column like Geofabrik's shapefiles do."""
+    import geopandas as gpd
+    import pandas as pd
+    import pyogrio
+
+    def layer(name):
+        g = pyogrio.read_dataframe(path, layer=name, bbox=bbox)
+        return g.set_crs(4326) if g.crs is None else g.to_crs(4326)
+
+    lines = layer("lines")
+    roads = lines[lines["highway"].notna()].copy()
+    roads["fclass"] = roads["highway"]
+
+    pts = layer("points")
+    pts["fclass"] = pts["other_tags"].map(lambda t: _tag(t, "amenity"))
+    polys = layer("multipolygons")
+    polys["fclass"] = polys["amenity"] if "amenity" in polys.columns else polys["other_tags"].map(lambda t: _tag(t, "amenity"))
+    pois = pd.concat([pts[["name", "fclass", "geometry"]], polys[["name", "fclass", "geometry"]]], ignore_index=True)
+    pois = gpd.GeoDataFrame(pois[pois["fclass"].notna()], geometry="geometry", crs=4326)
+
+    places = pts[pts["place"].notna()].copy() if "place" in pts.columns else pts.iloc[0:0].copy()
+    places["fclass"] = places["place"] if len(places) else []
+    return roads, pois, places
+
+
 def offline_stage(args):
     """Roads, facilities and settlements from downloaded Geofabrik files (gis_osm_*_free_1.shp). No network needed."""
     import geopandas as gpd
@@ -307,19 +342,25 @@ def offline_stage(args):
         raise SystemExit(f"Run --stage ee for {args.district} first (no real layers found in {args.out}/{args.id}.json).")
     s, w, n, e = pkg["bounds"]
     bbox = (w, s, e, n)
-    missing = [f for f in [args.roads_file] + (args.pois_file or []) + ([args.places_file] if args.places_file else []) if not os.path.exists(f)]
+    inputs = [args.pbf] if args.pbf else [args.roads_file] + (args.pois_file or []) + ([args.places_file] if args.places_file else [])
+    missing = [f for f in inputs if f and not os.path.exists(f)]
     if missing:
         raise SystemExit("These files do not exist:\n  " + "\n  ".join(missing) +
-                         "\nUnzip the Geofabrik download first, then point the options at the .shp files inside it "
-                         "(in cmd: dir /s /b C:\\Users\\%USERNAME%\\Downloads\\gis_osm_roads_free_1.shp finds it).")
+                         "\nPoint the option at the downloaded file (in cmd: dir /s /b C:\\Users\\shett\\*.osm.pbf finds it).")
 
     def read(path):
         g = gpd.read_file(path, bbox=bbox)
         return g.set_crs(4326) if g.crs is None else g.to_crs(4326)
 
-    roads = read(args.roads_file)
-    if "fclass" not in roads.columns:
-        raise SystemExit(f"{args.roads_file} has no 'fclass' column; use Geofabrik's gis_osm_roads_free_1.shp.")
+    if args.pbf:
+        print("Reading the OpenStreetMap extract (a large file: this can take several minutes) ...")
+        roads, pois_gdf, places = read_osm_extract(args.pbf, bbox)
+    else:
+        roads = read(args.roads_file)
+        if "fclass" not in roads.columns:
+            raise SystemExit(f"{args.roads_file} has no 'fclass' column; use Geofabrik's gis_osm_roads_free_1.shp.")
+        pois_gdf = pd.concat([read(f) for f in args.pois_file], ignore_index=True) if args.pois_file else None
+        places = read(args.places_file) if args.places_file else None
     roads = roads[roads["fclass"].isin(MOTORABLE)]
     lines = []
     for g in roads.geometry:
@@ -328,10 +369,8 @@ def offline_stage(args):
         for part in (g.geoms if g.geom_type == "MultiLineString" else [g]):
             lines.append(list(part.coords))
     graph = graph_from_lines(lines)
-    pois_gdf = pd.concat([read(f) for f in args.pois_file], ignore_index=True) if args.pois_file else None
     pois = (pois_from_records(records_from_gdf(pois_gdf, HOSPITAL_CLASSES), "hospital", 60)
             + pois_from_records(records_from_gdf(pois_gdf, SHELTER_CLASSES), "shelter", 80))
-    places = read(args.places_file) if args.places_file else None
     settlements = pois_from_records(records_from_gdf(places, PLACE_CLASSES), "settlement", 150)
     if not graph["edges"] or not pois:
         raise SystemExit("The files gave no motorable roads or no hospitals/shelters inside this district's box. "
@@ -363,6 +402,7 @@ def main(argv=None):
     ap.add_argument("--calamities", nargs="+", choices=["flood", "landslide"], default=["flood"])
     ap.add_argument("--events", default="", help="short text shown under the district name")
     ap.add_argument("--s1-event", help="pipeline/events.json key whose Sentinel-1 flood is blended into the flood layer")
+    ap.add_argument("--pbf", help="OFFLINE: a Geofabrik .osm.pbf extract (e.g. southern-zone-latest.osm.pbf); replaces the three file options")
     ap.add_argument("--roads-file", help="OFFLINE: Geofabrik gis_osm_roads_free_1.shp (skips Overpass)")
     ap.add_argument("--pois-file", nargs="+", help="OFFLINE: gis_osm_pois_free_1.shp and optionally gis_osm_pois_a_free_1.shp")
     ap.add_argument("--places-file", help="OFFLINE: gis_osm_places_free_1.shp (settlements)")
@@ -375,7 +415,7 @@ def main(argv=None):
     if args.stage in ("ee", "all"):
         ee_stage(args)
     if args.stage in ("osm", "all"):
-        (offline_stage if args.roads_file else osm_stage)(args)
+        (offline_stage if (args.roads_file or args.pbf) else osm_stage)(args)
 
 
 if __name__ == "__main__":

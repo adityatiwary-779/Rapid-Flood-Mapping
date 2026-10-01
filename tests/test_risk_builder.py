@@ -124,9 +124,36 @@ def test_offline_stage_end_to_end_with_small_files(tmp_path):
                       "geometry": [Point(76.2, 9.1), Point(76.3, 9.1)]}, crs=4326).to_file(tmp_path / "pois.shp")
     gpd.GeoDataFrame({"fclass": ["village"], "name": ["Vill"], "geometry": [Point(76.15, 9.1)]}, crs=4326).to_file(tmp_path / "places.shp")
     import argparse
-    a = argparse.Namespace(out=str(tmp_path), id="d", district="D", roads_file=str(tmp_path / "roads.shp"),
+    a = argparse.Namespace(out=str(tmp_path), id="d", district="D", pbf=None, roads_file=str(tmp_path / "roads.shp"),
                            pois_file=[str(tmp_path / "pois.shp")], places_file=str(tmp_path / "places.shp"))
     b.offline_stage(a)
     pkg = json.load(open(tmp_path / "d.json"))
     assert len(pkg["graph"]["edges"]) == 2 and {p["type"] for p in pkg["pois"]} == {"hospital", "shelter"}
     assert pkg["settlements"][0]["name"] == "Vill"
+
+
+OSM_XML = """<?xml version='1.0' encoding='UTF-8'?>
+<osm version='0.6' generator='test'>
+ <node id='1' lat='9.10' lon='76.10'/><node id='2' lat='9.10' lon='76.20'/><node id='3' lat='9.10' lon='76.30'/>
+ <node id='4' lat='9.20' lon='76.20'/>
+ <node id='5' lat='9.101' lon='76.201'><tag k='amenity' v='hospital'/><tag k='name' v='Gen Hosp'/></node>
+ <node id='6' lat='9.102' lon='76.202'><tag k='amenity' v='school'/><tag k='name' v='Sch'/></node>
+ <node id='7' lat='9.103' lon='76.15'><tag k='place' v='village'/><tag k='name' v='Vill'/></node>
+ <way id='10'><nd ref='1'/><nd ref='2'/><tag k='highway' v='primary'/></way>
+ <way id='11'><nd ref='2'/><nd ref='3'/><tag k='highway' v='residential'/></way>
+ <way id='12'><nd ref='2'/><nd ref='4'/><tag k='highway' v='footway'/></way>
+</osm>"""
+
+
+def test_offline_stage_from_a_raw_osm_extract(tmp_path):
+    import argparse
+    base = dict(id="d", name="D", state="Kerala", bounds=[9.0, 76.0, 9.5, 76.5], rows=3, cols=3, calamities=["flood"], events="x",
+                layers={}, graph=dict(nodes=[], edges=[]), pois=[], provenance=dict(kind="real", sources="s"))
+    b.write_package(tmp_path, base)
+    (tmp_path / "x.osm").write_text(OSM_XML)
+    a = argparse.Namespace(out=str(tmp_path), id="d", district="D", pbf=str(tmp_path / "x.osm"), roads_file=None, pois_file=None, places_file=None)
+    b.offline_stage(a)
+    pkg = json.load(open(tmp_path / "d.json"))
+    assert len(pkg["graph"]["edges"]) == 2                       # footway excluded
+    assert {(p["type"], p["name"]) for p in pkg["pois"]} == {("hospital", "Gen Hosp"), ("shelter", "Sch")}
+    assert [x["name"] for x in pkg["settlements"]] == ["Vill"]
