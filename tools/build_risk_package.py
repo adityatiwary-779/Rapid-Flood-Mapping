@@ -307,6 +307,11 @@ def offline_stage(args):
         raise SystemExit(f"Run --stage ee for {args.district} first (no real layers found in {args.out}/{args.id}.json).")
     s, w, n, e = pkg["bounds"]
     bbox = (w, s, e, n)
+    missing = [f for f in [args.roads_file] + (args.pois_file or []) + ([args.places_file] if args.places_file else []) if not os.path.exists(f)]
+    if missing:
+        raise SystemExit("These files do not exist:\n  " + "\n  ".join(missing) +
+                         "\nUnzip the Geofabrik download first, then point the options at the .shp files inside it "
+                         "(in cmd: dir /s /b C:\\Users\\%USERNAME%\\Downloads\\gis_osm_roads_free_1.shp finds it).")
 
     def read(path):
         g = gpd.read_file(path, bbox=bbox)
